@@ -12,19 +12,13 @@ A [Pi](https://github.com/earendil-works/pi-coding-agent) extension that gates b
 
 ## Installation
 
-### Option 1: Install via npm (recommended)
-
-```bash
-pi install npm:pi-safe-shell
-```
-
-### Option 2: Run from source
+### Option 1: Run from source
 
 ```bash
 pi -e ./path/to/pi-safe-shell/index.ts
 ```
 
-### Option 3: Manual install to auto-discovered location
+### Option 2: Manual install to auto-discovered location
 
 ```bash
 # Clone the repository
