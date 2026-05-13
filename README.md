@@ -6,20 +6,35 @@ A [Pi](https://github.com/earendil-works/pi-coding-agent) extension that gates b
 
 > Default: **🔒 Block** mode — the agent cannot run any shell commands unless you explicitly allow them.
 
+**Repository:** [github.com/aslamplr/pi-safe-shell](https://github.com/aslamplr/pi-safe-shell)
+
 ---
 
-## Quick Start
+## Installation
+
+### Option 1: Install via npm (recommended)
 
 ```bash
-# Install via pi
 pi install npm:pi-safe-shell
+```
 
-# Or run from source
-pi -e /path/to/pi-safe-shell/index.ts
+### Option 2: Run from source
 
-# Or copy to auto-discovered location
+```bash
+pi -e ./path/to/pi-safe-shell/index.ts
+```
+
+### Option 3: Manual install to auto-discovered location
+
+```bash
+# Clone the repository
+git clone https://github.com/aslamplr/pi-safe-shell.git ~/.pi/agent/extensions/pi-safe-shell
+
+# Or copy manually
 cp -r pi-safe-shell ~/.pi/agent/extensions/
 ```
+
+After installation, the extension loads automatically in all Pi sessions.
 
 ---
 
@@ -295,6 +310,13 @@ Scan code for shell-execution patterns
 ## Development
 
 ```bash
+# Clone the repository
+git clone https://github.com/aslamplr/pi-safe-shell.git
+cd pi-safe-shell
+
+# Install dependencies
+npm install
+
 # Run with the extension
 pi -e ./index.ts
 
@@ -312,6 +334,14 @@ pi-safe-shell/
 ├── tsconfig.json    # TypeScript config
 └── README.md        # This file
 ```
+
+### Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
 ---
 
