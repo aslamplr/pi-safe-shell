@@ -10,7 +10,7 @@
  * 3. Score - Calculate 0-100 risk score
  */
 
-import Parser from 'web-tree-sitter';
+import * as TreeSitter from 'web-tree-sitter';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -53,18 +53,18 @@ export interface RiskResult {
 // Parser initialization
 // ============================================================
 
-let parser: Parser | null = null;
-let bashLang: Parser.Language | null = null;
+let parser: TreeSitter.Parser | null = null;
+let bashLang: TreeSitter.Language | null = null;
 let isInitialized = false;
 
 export async function initParser(): Promise<void> {
   if (isInitialized) return;
   
-  await Parser.init();
-  bashLang = await Parser.Language.load(
+  await TreeSitter.Parser.init();
+  bashLang = await TreeSitter.Language.load(
     readFileSync(join(__dirname, 'tree-sitter-bash.wasm'))
   );
-  parser = new Parser();
+  parser = new TreeSitter.Parser();
   parser.setLanguage(bashLang);
   isInitialized = true;
 }
@@ -165,27 +165,41 @@ export function analyzeCommand(command: string): CommandAnalysis {
     intent: []
   };
   
-  function walk(node: Parser.SyntaxNode): void {
+  function walk(node: TreeSitter.Node): void {
     // Extract command name
     if (node.type === 'command_name') {
       result.executable = node.text;
+      // Don't walk children of command_name - they're just the command word
+      return;
     }
     
-    // Extract flags
-    if (node.type === 'flag') {
-      result.flags.push(node.text);
-    }
-    
-    // Extract word arguments and detect paths
-    if (node.type === 'word' && !node.text.startsWith('-')) {
-      result.args.push(node.text);
-      
-      // Detect paths
-      if (node.text.startsWith('/') || 
-          node.text.startsWith('./') || 
-          node.text.startsWith('~') || 
-          node.text.includes('/')) {
-        result.paths.push(node.text);
+    // Extract flags and arguments from word nodes
+    // tree-sitter-bash doesn't distinguish flags from words, so we check manually
+    if (node.type === 'word') {
+      if (node.text.startsWith('-')) {
+        // This is a flag (e.g., -l, -la, --long, -rf)
+        // Handle combined short flags like -la or -rf
+        if (node.text.startsWith('--')) {
+          result.flags.push(node.text);
+        } else if (node.text.startsWith('-')) {
+          // Split combined flags: -la -> -l, -a; -rf -> -r, -f
+          const flagChars = node.text.slice(1).split('');
+          for (const char of flagChars) {
+            result.flags.push('-' + char);
+          }
+        }
+      } else {
+        // Regular argument
+        result.args.push(node.text);
+        
+        // Detect paths (including variable references)
+        if (node.text.startsWith('/') || 
+            node.text.startsWith('./') || 
+            node.text.startsWith('~') || 
+            node.text.startsWith('$') ||
+            node.text.includes('/')) {
+          result.paths.push(node.text);
+        }
       }
     }
     
@@ -194,9 +208,15 @@ export function analyzeCommand(command: string): CommandAnalysis {
       result.hasPipe = true;
     }
     
-    // Detect redirects
-    if (node.type === 'redirect') {
+    // Detect redirects (file_redirect, heredoc_redirect, etc.)
+    if (node.type.includes('redirect')) {
       result.hasRedirect = true;
+      // Extract redirect target
+      for (const child of node.children) {
+        if (child.type === 'word' && (child.text.startsWith('/') || child.text.startsWith('./') || child.text.startsWith('~'))) {
+          result.paths.push(child.text);
+        }
+      }
     }
     
     // Recurse into children
@@ -240,15 +260,32 @@ const INTENT_WEIGHTS: Record<Intent, number> = {
 };
 
 const DANGEROUS_FLAGS: Record<string, number> = {
-  '-r': 20,
-  '-R': 20,
+  // Dangerous recursive flags (context-dependent)
+  '-r': 15,
+  '-R': 15,
   '-rf': 25,
   '-fr': 25,
+  
+  // Force flags
   '-f': 15,
   '--force': 15,
   '--force-with-lease': 10,
+  
+  // Dangerous modifiers
   '--no-preserve': 10,
   '--no-preserve-root': 30,
+  
+  // Common safe flags (explicitly zero)
+  '-l': 0,  // long listing
+  '-a': 0,  // all files
+  '-la': 0, // combined (won't be used after splitting)
+  '-al': 0,
+  '-h': 0,  // help/human-readable
+  '-i': 0,  // interactive
+  '-v': 0,  // verbose
+  '-n': 0,  // dry-run
+  '--help': 0,
+  '--version': 0,
 };
 
 const CRITICAL_COMMANDS = [
@@ -283,12 +320,26 @@ export function scoreCommand(analysis: CommandAnalysis): RiskResult {
   
   // 1. Intent weight (base score)
   const intent = analysis.intent[0] || Intent.Execute;
-  score += INTENT_WEIGHTS[intent] || 20;
+  const intentWeight = INTENT_WEIGHTS[intent];
+  score += intentWeight !== undefined ? intentWeight : 20;
   
-  // 2. Dangerous flags
+  // 2. Dangerous flags (context-aware)
   for (const flag of analysis.flags) {
-    if (DANGEROUS_FLAGS[flag]) {
-      score += DANGEROUS_FLAGS[flag];
+    const baseScore = DANGEROUS_FLAGS[flag] ?? 0;
+    
+    // Adjust -r/-R score based on command
+    let flagScore = baseScore;
+    if ((flag === '-r' || flag === '-R') && baseScore > 0) {
+      // Recursive is more dangerous with rm, less with grep/cp
+      if (analysis.executable === 'rm') {
+        flagScore = baseScore + 10; // rm -r is very dangerous
+      } else if (['grep', 'find', 'ls', 'cp', 'mv', 'chown', 'chmod'].includes(analysis.executable || '')) {
+        flagScore = Math.floor(baseScore * 0.5); // Less dangerous for these
+      }
+    }
+    
+    if (flagScore > 0) {
+      score += flagScore;
       reasons.push(`dangerous flag: ${flag}`);
       
       if (flag === '-r' || flag === '-R' || flag === '-rf' || flag === '-fr') {
@@ -302,14 +353,22 @@ export function scoreCommand(analysis: CommandAnalysis): RiskResult {
   
   // 3. Path scope analysis
   for (const path of analysis.paths) {
+    // Expand variables for analysis
+    const expandedPath = path
+      .replace(/^\$HOME/, '~')
+      .replace(/^\$\{HOME\}/, '~');
+    
+    // Check for variable references to HOME
+    const hasHomeVar = path.includes('$HOME') || path.includes('~');
+    
     // System root paths
-    if (SYSTEM_PATHS.some(sysPath => path.startsWith(sysPath + '/') || path === sysPath)) {
+    if (SYSTEM_PATHS.some(sysPath => expandedPath.startsWith(sysPath + '/') || expandedPath === sysPath)) {
       score += 30;
       reasons.push('targeting system root');
       riskFactors.push('system_path');
     }
-    // Home directory
-    else if (HOME_INDICATORS.some(indicator => path.startsWith(indicator))) {
+    // Home directory (including variable references)
+    else if (HOME_INDICATORS.some(indicator => expandedPath.startsWith(indicator)) || hasHomeVar) {
       score += 20;
       reasons.push('targeting home directory');
       riskFactors.push('home_directory');
@@ -319,21 +378,36 @@ export function scoreCommand(analysis: CommandAnalysis): RiskResult {
       score += 5;
     }
     // Project paths (relative, safer)
-    else if (path.startsWith('./') || !path.startsWith('/')) {
+    else if (path.startsWith('./') || (!path.startsWith('/') && !hasHomeVar)) {
       score += 10;
     }
   }
   
   // 4. Pipeline detection
   if (analysis.hasPipe) {
-    // Check for network-to-execution pattern (curl | bash)
-    if (analysis.executable === 'curl' || analysis.executable === 'wget') {
-      score += 40;
-      reasons.push('network to pipe');
+    // Check for network-to-execution pattern (curl | bash, wget | sh, etc.)
+    const hasNetworkToExec = /\b(curl|wget)\b.*\|.*\b(bash|sh|zsh|node|python|ruby|perl)\b/i.test(analysis.command);
+    if (hasNetworkToExec) {
+      score += 60;
+      reasons.push('network to pipe to execution');
       riskFactors.push('remote_code_execution');
     }
+    
+    // Check for sudo in pipeline (curl | sudo bash)
+    const hasSudoInPipe = /\|.*\bsudo\b/.test(analysis.command);
+    if (hasSudoInPipe) {
+      score += 30;
+      reasons.push('sudo in pipeline');
+      riskFactors.push('privilege_escalation');
+    }
+    
     // Check for data exfiltration pattern (cat .env | curl)
-    if (analysis.executable === 'cat' || analysis.executable === 'tail') {
+    const hasDataExfil = /\b(cat|tail)\b.*\.(env|ssh|pem|key|secret|credential).*\|.*\b(curl|wget)\b/i.test(analysis.command);
+    if (hasDataExfil) {
+      score += 60;
+      reasons.push('potential data exfiltration via pipe');
+      riskFactors.push('data_exfiltration');
+    } else if (analysis.executable === 'cat' || analysis.executable === 'tail') {
       const hasSecretFile = analysis.args.some(arg => 
         arg.includes('.env') || 
         arg.includes('.ssh') || 
@@ -380,6 +454,21 @@ export function scoreCommand(analysis: CommandAnalysis): RiskResult {
     riskFactors.push('fork_bomb');
   }
   
+  // Git force push to protected branches
+  if (analysis.executable === 'git') {
+    const hasForce = analysis.flags.some(f => f === '--force' || f === '-f');
+    const hasPush = analysis.args.includes('push');
+    const hasProtectedBranch = analysis.args.some(arg => 
+      arg === 'main' || arg === 'master' || arg === 'develop' || arg === 'production'
+    );
+    
+    if (hasForce && hasPush && hasProtectedBranch) {
+      score += 40;
+      reasons.push('force push to protected branch');
+      riskFactors.push('git_history_destruction');
+    }
+  }
+  
   // Sudo with dangerous command
   if (analysis.executable === 'sudo') {
     const firstArg = analysis.args[0];
@@ -396,18 +485,24 @@ export function scoreCommand(analysis: CommandAnalysis): RiskResult {
     const hasForce = analysis.flags.some(f => f === '-f' || f === '-rf');
     
     if (hasRecursive && hasForce) {
-      // Check target
-      const hasDangerousTarget = analysis.paths.some(path =>
-        path === '/' || 
-        path === '/etc' || 
-        path.startsWith('~') ||
-        path.startsWith('$HOME')
+      // Check for dangerous targets
+      const hasRootTarget = analysis.paths.some(path => path === '/' || path === '/etc' || path === '/usr');
+      const hasHomeTarget = analysis.paths.some(path => 
+        path.startsWith('~') || path.startsWith('$HOME') || path.includes('$HOME')
       );
       
-      if (hasDangerousTarget) {
-        score += 40;
-        reasons.push('rm -rf with dangerous target');
+      if (hasRootTarget) {
+        score += 50; // Make it critical when combined with system path bonus
+        reasons.push('rm -rf targeting system root');
         riskFactors.push('recursive_delete_critical');
+      } else if (hasHomeTarget) {
+        score += 50; // Make it critical when combined with home path bonus
+        reasons.push('rm -rf targeting home directory');
+        riskFactors.push('recursive_delete_critical');
+      } else {
+        score += 15; // Project-level rm -rf (danger but not critical)
+        reasons.push('rm -rf in project directory');
+        riskFactors.push('recursive_delete');
       }
     }
   }
