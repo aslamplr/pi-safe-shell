@@ -28,6 +28,7 @@ export enum Intent {
   Privilege = 'privilege', // sudo, chmod, chown
   Search = 'search',       // grep, find
   ProcessControl = 'process', // kill, pkill
+  CodeExecution = 'code_exec', // python -c, node -e, eval
   GitMutation = 'git',     // git commit, reset
 }
 
@@ -130,10 +131,15 @@ const COMMAND_INTENTS: Record<string, Intent> = {
   'node': Intent.Execute,
   'python': Intent.Execute,
   'python3': Intent.Execute,
+  'ruby': Intent.Execute,
+  'perl': Intent.Execute,
+  'php': Intent.Execute,
   'bash': Intent.Execute,
   'sh': Intent.Execute,
   'zsh': Intent.Execute,
   'exec': Intent.Execute,
+  'eval': Intent.CodeExecution,
+  'xargs': Intent.Execute,
   
   // Process control
   'kill': Intent.ProcessControl,
@@ -257,7 +263,13 @@ const INTENT_WEIGHTS: Record<Intent, number> = {
   [Intent.Delete]: 40,
   [Intent.Privilege]: 50,
   [Intent.ProcessControl]: 45,
+  [Intent.CodeExecution]: 55, // Higher base score for eval/exec patterns
 };
+
+const INTERPRETER_COMMANDS = [
+  'python', 'python3', 'node', 'ruby', 'perl', 'php',
+  'bash', 'sh', 'zsh', 'eval', 'exec', 'xargs'
+];
 
 const DANGEROUS_FLAGS: Record<string, number> = {
   // Dangerous recursive flags (context-dependent)
@@ -435,7 +447,35 @@ export function scoreCommand(analysis: CommandAnalysis): RiskResult {
     }
   }
   
-  // 6. Critical commands
+  // 6. Interpreter-based code execution detection
+  if (analysis.executable && INTERPRETER_COMMANDS.includes(analysis.executable)) {
+    // Check for -c, -e flags (inline code execution)
+    const hasInlineCode = analysis.flags.some(f => f === '-c' || f === '-e' || f === '-exec');
+    if (hasInlineCode) {
+      score += 20; // Base score for inline code (lower than before)
+      reasons.push('interpreter with inline code');
+      riskFactors.push('inline_code_execution');
+      
+      // Check if the inline code contains dangerous patterns
+      const codeArg = analysis.args.find(arg => !arg.includes('/') && !arg.startsWith('-'));
+      if (codeArg) {
+        // Check for destructive commands in the inline code
+        if (/\b(rm\s+-rf|dd\s+if=|mkfs|fdisk)\b/.test(codeArg)) {
+          score += 60;
+          reasons.push('inline code contains destructive command');
+          riskFactors.push('destructive_inline_code');
+        }
+        // Check for network operations in inline code
+        if (/\b(import\s+(urllib|requests|socket)|require\(['"](https?|fs|child_process)['"])\b|system\(|exec\(/.test(codeArg)) {
+          score += 25;
+          reasons.push('inline code contains network/system calls');
+          riskFactors.push('network_inline_code');
+        }
+      }
+    }
+  }
+  
+  // 7. Critical commands
   const commandWords = analysis.command.split(/\s+/);
   for (const critical of CRITICAL_COMMANDS) {
     if (commandWords.some(word => word === critical || word.startsWith(critical + '.'))) {
@@ -452,6 +492,30 @@ export function scoreCommand(analysis: CommandAnalysis): RiskResult {
     score += 100;
     reasons.push('fork bomb pattern detected');
     riskFactors.push('fork_bomb');
+  }
+  
+  // Base64 encoded command execution (common obfuscation)
+  if (/\b(base64\s+(-d|--decode)|base64\s+-d).*\|.*\b(bash|sh|zsh)\b/i.test(analysis.command)) {
+    score += 70;
+    reasons.push('base64 decoded command piped to shell');
+    riskFactors.push('obfuscated_code_execution');
+  }
+  if (/\becho\s+.*\|\s*base64\s+(-d|--decode).*\|.*\b(bash|sh|zsh)\b/i.test(analysis.command)) {
+    score += 75;
+    reasons.push('echo piped to base64 decode and shell');
+    riskFactors.push('obfuscated_code_execution');
+  }
+  
+  // wget alternative patterns
+  if (/\bwget\b.*-qO-.*\|.*\b(bash|sh)\b/i.test(analysis.command)) {
+    score += 60;
+    reasons.push('wget quiet output piped to shell');
+    riskFactors.push('remote_code_execution');
+  }
+  if (/\bwget\b.*(-O|output-document).*&&.*\b(bash|sh)\b/i.test(analysis.command)) {
+    score += 55;
+    reasons.push('wget download and execute pattern');
+    riskFactors.push('remote_code_execution');
   }
   
   // Git force push to protected branches
