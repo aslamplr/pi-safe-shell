@@ -1,10 +1,11 @@
 /**
  * pi-safe-shell — Protect your production assets from dangerous bash commands.
  *
- * Three operating modes:
+ * Four operating modes:
  *   block     (default) — All bash calls are blocked. Agent must use Read/Write/Edit/Grep/Find.
  *   ask       — User is prompted for each bash call. Can allow once or for the session.
  *   whitelist — Only commands matching curated safe patterns pass through.
+ *   yolo      — Allow everything except denylist items. Use with extreme caution.
  *
  * Three layers of config (highest priority first):
  *   1. Session state  (temp approvals granted during this chat)
@@ -22,7 +23,7 @@
  *
  * Commands:
  *   /safe-shell                     — Show current mode + summary
- *   /safe-shell mode block|ask|whitelist  — Switch mode
+ *   /safe-shell mode block|ask|whitelist|yolo  — Switch mode
  *   /safe-shell allow <command> [--project]  — Add approval (--project persists to .pi/pi-safe-shell.json)
  *   /safe-shell deny <command> [--project]   — Remove approval (--project removes from project whitelist)
  */
@@ -41,7 +42,7 @@ import { promisify } from "node:util";
 // Types
 // ============================================================
 
-type Mode = "block" | "ask" | "whitelist";
+type Mode = "block" | "ask" | "whitelist" | "yolo";
 
 interface GlobalConfig {
   defaultMode: Mode;
@@ -201,6 +202,7 @@ const MODE_LABELS: Record<Mode, string> = {
   block: "🔒 Block",
   ask: "❓ Ask",
   whitelist: "🔓 Whitelist",
+  yolo: "🚀 YOLO",
 };
 
 // State management functions (defined early for use in checkShellCommand)
@@ -398,6 +400,12 @@ async function checkShellCommand(
       return undefined; // Allow
     }
 
+    case "yolo": {
+      // YOLO mode: allow everything except denylist items (checked above)
+      // No whitelist check, no user prompt
+      return undefined;
+    }
+
     default:
       return {
         block: true,
@@ -477,7 +485,7 @@ export default function (pi: ExtensionAPI) {
       }
     }
     if (found) {
-      if (found.mode && ["block", "ask", "whitelist"].includes(found.mode)) {
+      if (found.mode && ["block", "ask", "whitelist", "yolo"].includes(found.mode)) {
         sessionMode = found.mode;
       }
       if (Array.isArray(found.tempApprovals)) {
@@ -537,10 +545,9 @@ export default function (pi: ExtensionAPI) {
         ? "All bash commands are blocked. Use the available built-in tools (Read, Write, Edit, Grep, Find) or registered safe tools (run_tests, git_status, list_files)."
         : mode === "ask"
           ? `Each bash command requires user confirmation. You may ask the user to approve individual commands or switch modes via /safe-shell.`
-          : `Only whitelisted bash patterns are allowed. Session has ${approvals} command approval(s). You may ask the user to approve additional commands via /safe-shell.`) +
-      `\n\n` +
-      `Session command approvals: ${approvals}` +
-      (approvals > 0 ? `\n${tempApprovals.map((a) => `  • ${a}`).join("\n")}` : "");
+          : mode === "whitelist"
+            ? `Only whitelisted bash patterns are allowed. Session has ${approvals} command approval(s). You may ask the user to approve additional commands via /safe-shell.`
+            : `⚠️ YOLO MODE: All commands allowed except denylist items. Use with extreme caution. Session has ${approvals} command approval(s).`);
 
     return {
       systemPrompt: _event.systemPrompt + `\n\n## Safe Shell\n\n${modeHint}`,
@@ -923,7 +930,7 @@ export default function (pi: ExtensionAPI) {
           "",
           "Commands:",
           "  /safe-shell                       Show this status",
-          "  /safe-shell mode block|ask|whitelist   Switch operating mode",
+          "  /safe-shell mode block|ask|whitelist|yolo   Switch operating mode",
           "  /safe-shell allow <command> [--project]   Approve a command (--project persists to project)",
           "  /safe-shell deny <command> [--project]    Remove approval (--project removes from project)",
           "",
@@ -947,9 +954,9 @@ export default function (pi: ExtensionAPI) {
       switch (subcommand) {
         case "mode": {
           const target = value;
-          if (!["block", "ask", "whitelist"].includes(target)) {
+          if (!["block", "ask", "whitelist", "yolo"].includes(target)) {
             ctx.ui.notify(
-              `Invalid mode "${target}". Use: block, ask, or whitelist.`,
+              `Invalid mode "${target}". Use: block, ask, whitelist, or yolo.`,
               "error",
             );
             return;

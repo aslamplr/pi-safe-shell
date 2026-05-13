@@ -2,9 +2,11 @@
 
 **Protect your production assets from dangerous bash commands.**
 
-A [Pi](https://github.com/earendil-works/pi-coding-agent) extension that gates bash and all shell-executing tools with three security modes, inspired by the [bash-damage-from-within](https://github.com/disler/bash-damage-from-within) project.
+A [Pi](https://github.com/earendil-works/pi-coding-agent) extension that gates bash and all shell-executing tools with four security modes, inspired by the [bash-damage-from-within](https://github.com/disler/bash-damage-from-within) project.
 
 > Default: **🔒 Block** mode — the agent cannot run any shell commands unless you explicitly allow them.
+> 
+> **New:** **🚀 YOLO** mode — allow everything except denylist items. Use with extreme caution.
 
 **Repository:** [github.com/aslamplr/pi-safe-shell](https://github.com/aslamplr/pi-safe-shell)
 
@@ -40,13 +42,14 @@ pi install npm:@aslamplr/pi-safe-shell
 
 ---
 
-## Three Modes
+## Four Modes
 
 | Mode | Behavior | Use Case |
 |------|----------|----------|
 | **🔒 Block** (default) | All shell calls blocked. Agent uses Read/Write/Edit + safe registered tools. | Maximum safety. You're in control. |
 | **❓ Ask** | Each shell call shows a selection prompt with 4 options. | Selective override without mode-switching. |
 | **🔓 Whitelist** | Only commands matching curated safe patterns pass through. Compound shell operators rejected. | Standard dev workflow. |
+| **🚀 YOLO** | All commands allowed EXCEPT denylist items. No prompts, no whitelist check. | Maximum freedom with minimal safety net. Use with extreme caution. |
 
 ### Switch modes mid-session
 
@@ -54,6 +57,7 @@ pi install npm:@aslamplr/pi-safe-shell
 /safe-shell mode ask
 /safe-shell mode whitelist
 /safe-shell mode block
+/safe-shell mode yolo
 ```
 
 ---
