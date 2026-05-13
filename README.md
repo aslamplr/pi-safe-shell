@@ -345,6 +345,43 @@ pi-safe-shell/
 
 ---
 
+## ⚠️ Limitations & Warnings
+
+**This extension is not bulletproof.** While it provides strong protection against common shell command execution paths, determined agents or sophisticated code can potentially bypass these safeguards:
+
+### Known Limitations
+
+1. **Pure code execution**: An agent could write pure JavaScript/Python code that executes shell commands using techniques not covered by the heuristic patterns (e.g., dynamic imports, eval-based execution, native bindings, FFI calls).
+
+2. **Unmonitored tools**: The extension gates known shell-executing tools (`bash`, `ctx_execute`, `interactive_shell`, `ctx_batch_execute`). New tools, MCP servers, or custom extensions that execute shell commands are not automatically gated.
+
+3. **Pattern evasion**: The heuristic detection for JS/Python `ctx_execute` calls uses pattern matching. Obfuscated or dynamically constructed shell commands may evade detection.
+
+4. **External processes**: Agents could potentially spawn processes through other means (e.g., Node.js worker threads, Python multiprocessing, platform-specific APIs) that bypass the gate.
+
+5. **Mid-session changes**: If the extension is loaded mid-session or reloaded, there may be transient states where protections are not fully active.
+
+**Use this extension as one layer of defense, not as your only security measure.** Always review agent-generated code before execution, especially when granting broad permissions.
+
+---
+
+## ⚖️ No Warranty
+
+**THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.**
+
+In no event shall the authors or copyright holders be liable for any claim, damages, or other liability, whether in an action of contract, tort, or otherwise, arising from, out of, or in connection with the software or the use or other dealings in the software.
+
+**USE THIS EXTENSION AT YOUR OWN RISK.** The authors make no representations or warranties that this extension will prevent all shell command execution, protect against all malicious code, or be error-free. You are solely responsible for:
+
+- Reviewing and understanding the code this extension protects
+- Configuring appropriate security policies for your use case
+- Monitoring agent behavior and system activity
+- Maintaining backups of important data and production assets
+
+By using this extension, you acknowledge that you have read and understood these limitations and agree to use the software at your own discretion and risk.
+
+---
+
 ## Credits
 
 Inspired by [bash-damage-from-within](https://github.com/disler/bash-damage-from-within) by [IndyDevDan](https://www.youtube.com/@indydevdan) — a brilliant 5-level ladder for securing agentic bash access.
