@@ -30,6 +30,14 @@ cp -r pi-safe-shell ~/.pi/agent/extensions/
 
 After installation, the extension loads automatically in all Pi sessions.
 
+### Option 3: Install via npm
+
+```bash
+pi install npm:@aslamplr/pi-safe-shell
+```
+
+> **Note:** Replace `@aslamplr/pi-safe-shell` with the latest version tag.
+
 ---
 
 ## Three Modes
@@ -336,6 +344,71 @@ pi-safe-shell/
 3. Commit your changes (`git commit -m 'Add amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
+
+---
+
+## Releasing (Publishing to npm)
+
+Publishing to npm is a **manual, explicit decision** to ensure stability and prevent accidental releases.
+
+### Prerequisites
+
+1. **GitHub secret**: Set `NPM_TOKEN` in repository settings
+   - Go to: `Settings` → `Secrets and variables` → `Actions`
+   - Click `New repository secret`
+   - Name: `NPM_TOKEN`
+   - Value: Your npm access token (get from https://www.npmjs.com/settings/YOUR_USERNAME/tokens)
+   - Token must have `Publish` permission
+
+2. **Update version in package.json**:
+   ```bash
+   # Edit package.json, update version field (e.g., "0.1.0" -> "0.2.0")
+   # Follow semver: MAJOR.MINOR.PATCH
+   ```
+
+3. **Commit and push**:
+   ```bash
+   git add package.json
+   git commit -m "chore: bump version to 0.2.0"
+   git push origin main
+   ```
+
+### Publish Workflow
+
+1. **Navigate to GitHub Actions**:
+   - Go to: `https://github.com/aslamplr/pi-safe-shell/actions`
+   - Click on workflow: `CD (Publish to npm)`
+
+2. **Trigger manual run**:
+   - Click `Run workflow` button
+   - Select branch: `main`
+   - Enter version: `0.2.0` (must match package.json exactly)
+   - Click `Run workflow`
+
+3. **Workflow execution**:
+   - ✅ CI checks run first (tests + type-checking)
+   - ✅ Version validation (package.json must match input)
+   - ✅ npm publish with provenance
+
+4. **Verify publish**:
+   - Check workflow run output for success
+   - Verify on npm: https://www.npmjs.com/package/@aslamplr/pi-safe-shell
+   - Install test: `pi install npm:@aslamplr/pi-safe-shell@0.2.0`
+
+### Troubleshooting
+
+**Workflow fails with version mismatch:**
+- Ensure package.json version matches the version input exactly
+- Example: package.json has `"0.2.0"`, workflow input must be `0.2.0`
+
+**Workflow fails with auth error:**
+- Verify `NPM_TOKEN` secret is set correctly
+- Check token has `Publish` permission
+- Token may have expired - regenerate if needed
+
+**Package already exists:**
+- Version must be unique - bump version in package.json
+- npm does not allow overwriting published versions
 
 ---
 

@@ -1,5 +1,5 @@
 {
-  "name": "pi-safe-shell",
+  "name": "@aslamplr/pi-safe-shell",
   "version": "0.1.0",
   "description": "Protect your production assets from dangerous bash commands. Default no-bash mode with user approval gates and whitelist support.",
   "license": "MIT",
@@ -16,12 +16,20 @@
       "./index.ts"
     ]
   },
-  "main": "index.js",
+  "main": "index.ts",
   "scripts": {
     "test": "vitest run"
   },
-  "author": "",
+  "author": "aslamplr",
   "type": "commonjs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aslamplr/pi-safe-shell.git"
+  },
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
   "devDependencies": {
     "@types/node": "^25.7.0",
     "vitest": "^4.1.6"
