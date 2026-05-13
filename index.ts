@@ -37,6 +37,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { promisify } from "node:util";
+import { initParser, analyzeCommand, scoreCommand, isParserInitialized } from "./src/ast-analyzer";
 
 // ============================================================
 // Types
@@ -317,6 +318,33 @@ async function checkShellCommand(
     return undefined; // Allow
   }
 
+  // --- 2b. AST-based risk analysis (logging only for Phase 1) ---
+  if (isParserInitialized()) {
+    try {
+      const astAnalysis = analyzeCommand(command);
+      const riskResult = scoreCommand(astAnalysis);
+      
+      // Log AST analysis for learning (Phase 1 - no blocking yet)
+      if (riskResult.level !== 'safe') {
+        console.log(`[pi-safe-shell AST] ${command}`);
+        console.log(`  Score: ${riskResult.score} (${riskResult.level})`);
+        console.log(`  Reasons: ${riskResult.reasons.join(', ')}`);
+        console.log(`  Risk factors: ${riskResult.riskFactors.join(', ')}`);
+      }
+      
+      // Phase 3: Block critical only (commented out for now)
+      // if (riskResult.level === 'critical') {
+      //   return {
+      //     block: true,
+      //     reason: `AST analysis detected critical risk (${riskResult.score}): ${riskResult.reasons.join(', ')}`
+      //   };
+      // }
+    } catch (err) {
+      // AST analysis failed - log but don't block
+      console.error('[pi-safe-shell AST] Analysis failed:', err);
+    }
+  }
+
   // --- 3. Mode check ---
   switch (mode) {
     case "block": {
@@ -527,6 +555,16 @@ export default function (pi: ExtensionAPI) {
           "warning",
         );
       }
+    }
+
+    // Initialize AST parser
+    try {
+      await initParser();
+    } catch (err) {
+      ctx.ui.notify(
+        `pi-safe-shell: AST parser initialization failed. AST analysis disabled.`,
+        "warning",
+      );
     }
 
     // Rebuild session state
