@@ -41,6 +41,7 @@ export interface CommandAnalysis {
   hasRedirect: boolean;
   paths: string[];
   intent: Intent[];
+  inlineCode?: string; // Code extracted from -c/-e flags
 }
 
 export interface RiskResult {
@@ -179,6 +180,18 @@ export function analyzeCommand(command: string): CommandAnalysis {
       return;
     }
     
+    // Extract inline code from string nodes (after -c/-e flags)
+    if (node.type === 'string_content') {
+      // Check if parent string node's previous sibling was -c or -e flag
+      const parentString = node.parent;
+      if (parentString && parentString.type === 'string') {
+        const prevSibling = parentString.previousSibling;
+        if (prevSibling && (prevSibling.text === '-c' || prevSibling.text === '-e' || prevSibling.text === '-exec')) {
+          result.inlineCode = node.text;
+        }
+      }
+    }
+    
     // Extract flags and arguments from word nodes
     // tree-sitter-bash doesn't distinguish flags from words, so we check manually
     if (node.type === 'word') {
@@ -278,6 +291,78 @@ const INTERPRETER_COMMANDS = [
   'python', 'python3', 'node', 'ruby', 'perl', 'php',
   'bash', 'sh', 'zsh', 'eval', 'exec', 'xargs'
 ];
+
+/**
+ * Analyze inline code string (from -c/-e flags) for dangerous patterns
+ */
+function analyzeInlineCode(code: string): { score: number; reasons: string[]; riskFactors: string[] } {
+  const result = { score: 0, reasons: [] as string[], riskFactors: [] as string[] };
+  
+  // Check for destructive shell commands (works for sh -c, bash -c, and system/exec calls)
+  if (/\b(rm\s+-rf\s+[/~\\]|dd\s+if=|mkfs|fdisk|parted|partprobe)/.test(code)) {
+    result.score += 60;
+    result.reasons.push('inline code contains destructive shell command');
+    result.riskFactors.push('destructive_inline_code');
+  }
+  
+  // Check for system/exec calls (Node.js, Python)
+  if (/\b(system|exec|execSync|spawn|spawnSync)\s*\(/.test(code)) {
+    result.score += 40;
+    result.reasons.push('inline code calls system/exec');
+    result.riskFactors.push('system_call');
+  }
+  
+  // Check for network operations (Python urllib/requests, Node.js https, curl in shell)
+  if (/\b(urllib|requests|socket|https?|http\.get|axios|curl\s+http)\b/.test(code)) {
+    result.score += 30;
+    result.reasons.push('inline code contains network operations');
+    result.riskFactors.push('network_inline_code');
+  }
+  
+  // Check for pipe to shell (bash -c "curl ... | bash")
+  if (/\b(curl|wget)\s+.*\|.*\b(bash|sh|zsh)\b/.test(code)) {
+    result.score += 60;
+    result.reasons.push('inline code contains remote code execution pattern');
+    result.riskFactors.push('rce_inline_code');
+  }
+  
+  // Check for file system operations (Node.js fs, Python os.path)
+  if (/\b(fs\.|writeFile|readFile|unlink|rename|mkdir|chmod|os\.path|os\.remove|os\.rmdir)\b/.test(code)) {
+    result.score += 25;
+    result.reasons.push('inline code contains file system operations');
+    result.riskFactors.push('fs_operations');
+  }
+  
+  // Check for child_process
+  if (/\b(child_process|exec|execSync|spawn|spawnSync)\b/.test(code)) {
+    result.score += 35;
+    result.reasons.push('inline code uses child_process');
+    result.riskFactors.push('child_process_usage');
+  }
+  
+  // Check for eval in the inline code (nested eval)
+  if (/\beval\s*\(/.test(code)) {
+    result.score += 40;
+    result.reasons.push('inline code contains nested eval');
+    result.riskFactors.push('nested_eval');
+  }
+  
+  // Check for base64 decode
+  if (/\b(atob|base64|b64decode)\b/.test(code)) {
+    result.score += 30;
+    result.reasons.push('inline code contains base64 decoding');
+    result.riskFactors.push('obfuscated_code');
+  }
+  
+  // Check for dynamic import/require
+  if (/\b(require|import)\s*\(['"]/.test(code)) {
+    result.score += 20;
+    result.reasons.push('inline code dynamically imports modules');
+    result.riskFactors.push('dynamic_import');
+  }
+  
+  return result;
+}
 
 const DANGEROUS_FLAGS: Record<string, number> = {
   // Dangerous recursive flags (context-dependent)
@@ -460,25 +545,16 @@ export function scoreCommand(analysis: CommandAnalysis): RiskResult {
     // Check for -c, -e flags (inline code execution)
     const hasInlineCode = analysis.flags.some(f => f === '-c' || f === '-e' || f === '-exec');
     if (hasInlineCode) {
-      score += 20; // Base score for inline code (lower than before)
+      score += 20; // Base score for inline code
       reasons.push('interpreter with inline code');
       riskFactors.push('inline_code_execution');
       
-      // Check if the inline code contains dangerous patterns
-      const codeArg = analysis.args.find(arg => !arg.includes('/') && !arg.startsWith('-'));
-      if (codeArg) {
-        // Check for destructive commands in the inline code
-        if (/\b(rm\s+-rf|dd\s+if=|mkfs|fdisk)\b/.test(codeArg)) {
-          score += 60;
-          reasons.push('inline code contains destructive command');
-          riskFactors.push('destructive_inline_code');
-        }
-        // Check for network operations in inline code
-        if (/\b(import\s+(urllib|requests|socket)|require\(['"](https?|fs|child_process)['"])\b|system\(|exec\(/.test(codeArg)) {
-          score += 25;
-          reasons.push('inline code contains network/system calls');
-          riskFactors.push('network_inline_code');
-        }
+      // Recursively analyze the inline code if extracted
+      if (analysis.inlineCode) {
+        const inlineAnalysis = analyzeInlineCode(analysis.inlineCode);
+        score += inlineAnalysis.score;
+        reasons.push(...inlineAnalysis.reasons);
+        riskFactors.push(...inlineAnalysis.riskFactors);
       }
     }
   }
