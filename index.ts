@@ -203,6 +203,26 @@ const MODE_LABELS: Record<Mode, string> = {
   whitelist: "🔓 Whitelist",
 };
 
+// State management functions (defined early for use in checkShellCommand)
+let _pi: ExtensionAPI | null = null;
+let _sessionMode: Mode | undefined;
+let _tempApprovals: string[] = [];
+
+function setSessionState(pi: ExtensionAPI, mode: Mode | undefined, tempApprovals: string[]) {
+  _pi = pi;
+  _sessionMode = mode;
+  _tempApprovals = tempApprovals;
+}
+
+function persistState(): void {
+  if (!_pi) return;
+  const state: SessionState = {
+    mode: _sessionMode,
+    tempApprovals: [..._tempApprovals],
+  };
+  _pi.appendEntry(SESSION_STATE_TYPE, state);
+}
+
 function compilePatterns(patterns: string[]): RegExp[] {
   return patterns.map((p) => {
     try {
@@ -305,8 +325,10 @@ async function checkShellCommand(
           `  Tool: ${toolName}\n` +
           `  Command: ${truncate(command, 200)}\n\n` +
           `  Use one of the available built-in tools (Read, Write, Edit, Grep, Find)\n` +
-          `  or a registered safe tool (run_tests, git_status, list_files).\n` +
-          `  To allow this command: /safe-shell allow ${truncate(command, 100)}`,
+          `  or a registered safe tool (run_tests, git_status, list_files).\n\n` +
+          `  To allow this command WITHOUT using bash:\n` +
+          `    → Use the safe_shell_approve tool with action="allow" and command="${truncate(command, 80)}"\n` +
+          `    → Or run: /safe-shell allow ${truncate(command, 100)}`,
       };
     }
 
@@ -333,8 +355,10 @@ async function checkShellCommand(
         reason:
           `command not in allowlist.\n` +
           `  Tool: ${toolName}\n` +
-          `  Command: ${truncate(command, 200)}\n` +
-          `  To allow this command: /safe-shell allow ${truncate(command, 100)}`,
+          `  Command: ${truncate(command, 200)}\n\n` +
+          `  To allow this command:\n` +
+          `    → Use the safe_shell_approve tool with action="allow" and command="${truncate(command, 80)}"\n` +
+          `    → Or run: /safe-shell allow ${truncate(command, 100)}`,
       };
     }
 
@@ -365,6 +389,7 @@ async function checkShellCommand(
 
       if (choice === "Allow for Project") {
         tempApprovals.push(command);
+        persistState();
         if (persistAllowToProject(ctx.cwd, command) && reloadProjectConfig) {
           reloadProjectConfig(ctx.cwd);
         }
@@ -421,6 +446,11 @@ export default function (pi: ExtensionAPI) {
   let sessionMode: Mode | undefined;
   let tempApprovals: string[] = [];
 
+  // Sync state to module-level variables for checkShellCommand
+  function syncState() {
+    setSessionState(pi, sessionMode, tempApprovals);
+  }
+
   // ---- Config (loaded once on startup, cached) ----
   let globalConfig: GlobalConfig = { ...DEFAULT_CONFIG };
   let projectConfig: Partial<GlobalConfig> | null = null;
@@ -430,7 +460,7 @@ export default function (pi: ExtensionAPI) {
     return sessionMode ?? projectConfig?.defaultMode ?? globalConfig.defaultMode;
   }
 
-// Rebuild session state from persisted entries
+  // Rebuild session state from persisted entries
   function rebuildState(_ctx: ExtensionContext): void {
     sessionMode = undefined;
     tempApprovals = [];
@@ -454,15 +484,9 @@ export default function (pi: ExtensionAPI) {
         tempApprovals = [...found.tempApprovals];
       }
     }
-  }
 
-  // Persist current session state
-  function persistState(): void {
-    const state: SessionState = {
-      mode: sessionMode,
-      tempApprovals: [...tempApprovals],
-    };
-    pi.appendEntry(SESSION_STATE_TYPE, state);
+    // Sync to module-level for checkShellCommand
+    syncState();
   }
 
   // ---- Event: session_start ----
