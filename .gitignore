@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.js
+*.d.ts
+*.map
+
+# Test
+coverage/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test fixtures (keep target-sec for testing but ignore its contents if generated)
+# target-sec/
+
+# Project config (user-specific, not committed)
+.pi/pi-safe-shell.json
+
+# Temporary files
+tmp/
+temp/
+*.tmp

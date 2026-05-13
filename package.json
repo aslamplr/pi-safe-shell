@@ -1,0 +1,29 @@
+{
+  "name": "pi-safe-shell",
+  "version": "0.1.0",
+  "description": "Protect your production assets from dangerous bash commands. Default no-bash mode with user approval gates and whitelist support.",
+  "license": "MIT",
+  "keywords": [
+    "pi",
+    "pi-extension",
+    "bash",
+    "security",
+    "safety",
+    "guard"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "main": "index.js",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "author": "",
+  "type": "commonjs",
+  "devDependencies": {
+    "@types/node": "^25.7.0",
+    "vitest": "^4.1.6"
+  }
+}
