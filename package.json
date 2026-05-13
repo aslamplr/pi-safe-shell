@@ -24,7 +24,7 @@
   "type": "commonjs",
   "repository": {
     "type": "git",
-    "url": "https://github.com/aslamplr/pi-safe-shell.git"
+    "url": "git+https://github.com/aslamplr/pi-safe-shell.git"
   },
   "files": [
     "index.ts",
