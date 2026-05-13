@@ -214,6 +214,14 @@ export function analyzeCommand(command: string): CommandAnalysis {
       result.hasPipe = true;
     }
     
+    // Detect command chaining (&&, ||, ;)
+    if (node.type === '&&' || node.type === '||' || node.type === ';') {
+      result.hasPipe = true; // Treat chaining like piping for risk assessment
+      if (!result.flags.includes('chained_command')) {
+        result.flags.push('chained_command');
+      }
+    }
+    
     // Detect redirects (file_redirect, heredoc_redirect, etc.)
     if (node.type.includes('redirect')) {
       result.hasRedirect = true;
@@ -492,6 +500,40 @@ export function scoreCommand(analysis: CommandAnalysis): RiskResult {
     score += 100;
     reasons.push('fork bomb pattern detected');
     riskFactors.push('fork_bomb');
+  }
+  
+  // Command chaining analysis (&&, ||, ;)
+  if (analysis.flags.includes('chained_command')) {
+    // Split command by && ||, and ; to analyze each part
+    const commands = analysis.command.split(/&&|\|\||;/).map(c => c.trim()).filter(c => c.length > 0);
+    
+    // Check if any command in the chain is dangerous
+    for (const cmd of commands) {
+      // Check for destructive commands in chain
+      if (/\b(rm\s+-rf\s+[/~]|dd\s+if=|mkfs|fdisk)\b/.test(cmd)) {
+        score += 40;
+        reasons.push('chained command contains destructive operation');
+        riskFactors.push('destructive_chain');
+      }
+      // Check for RCE patterns in chain
+      if (/\b(curl|wget)\b.*\|.*\b(bash|sh)\b/.test(cmd)) {
+        score += 50;
+        reasons.push('chained command contains remote code execution');
+        riskFactors.push('rce_in_chain');
+      }
+      // Check for data exfiltration in chain
+      if (/\b(cat|tar)\b.*\|.*\b(curl|wget|nc)\b/.test(cmd)) {
+        score += 45;
+        reasons.push('chained command contains data exfiltration');
+        riskFactors.push('exfil_in_chain');
+      }
+      // Check for sudo in chain
+      if (/\bsudo\b/.test(cmd)) {
+        score += 20;
+        reasons.push('chained command contains sudo');
+        riskFactors.push('sudo_in_chain');
+      }
+    }
   }
   
   // Base64 encoded command execution (common obfuscation)

