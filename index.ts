@@ -324,19 +324,29 @@ async function checkShellCommand(
       const astAnalysis = analyzeCommand(command);
       const riskResult = scoreCommand(astAnalysis);
       
-      // Log AST analysis for learning (Phase 1 - no blocking yet)
-      if (riskResult.level !== 'safe') {
-        console.log(`[pi-safe-shell AST] ${command}`);
-        console.log(`  Score: ${riskResult.score} (${riskResult.level})`);
-        console.log(`  Reasons: ${riskResult.reasons.join(', ')}`);
-        console.log(`  Risk factors: ${riskResult.riskFactors.join(', ')}`);
+      // Phase 3: Log all analysis, block based on risk level
+      console.log(`[pi-safe-shell AST] ${command}`);
+      console.log(`  Score: ${riskResult.score} (${riskResult.level})`);
+      console.log(`  Reasons: ${riskResult.reasons.join(', ')}`);
+      console.log(`  Risk factors: ${riskResult.riskFactors.join(', ')}`);
+      
+      // Phase 3: Block critical risks, require confirmation for danger
+      if (riskResult.level === 'critical') {
+        return {
+          block: true,
+          reason: `🚨 AST analysis detected CRITICAL risk (${riskResult.score}): ${riskResult.reasons.join(', ')}\n\n  Command: ${truncate(command, 200)}\n  Risk factors: ${riskResult.riskFactors.join(', ')}\n\n  This command pattern is known to be destructive or dangerous.\n  Use safe_shell_approve tool to allow this specific command if you're sure it's safe.`,
+        };
       }
       
-      // Phase 3: Block critical only (commented out for now)
-      // if (riskResult.level === 'critical') {
-      //   return {
-      //     block: true,
-      //     reason: `AST analysis detected critical risk (${riskResult.score}): ${riskResult.reasons.join(', ')}`
+      if (riskResult.level === 'danger' && mode !== 'yolo') {
+        // In 'ask' mode, require confirmation for danger-level commands
+        if (mode === 'ask') {
+          return {
+            block: true,
+            reason: `⚠️ AST analysis detected DANGER level risk (${riskResult.score}): ${riskResult.reasons.join(', ')}\n\n  Command: ${truncate(command, 200)}\n  Risk factors: ${riskResult.riskFactors.join(', ')}\n\n  This command may be dangerous. Please confirm with safe_shell_approve tool.`,
+          };
+        }
+      }
       //   };
       // }
     } catch (err) {

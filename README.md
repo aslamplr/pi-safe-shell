@@ -51,6 +51,32 @@ pi install npm:@aslamplr/pi-safe-shell
 | **🔓 Whitelist** | Only commands matching curated safe patterns pass through. Compound shell operators rejected. | Standard dev workflow. |
 | **🚀 YOLO** | All commands allowed EXCEPT denylist items. No prompts, no whitelist check. | Maximum freedom with minimal safety net. Use with extreme caution. |
 
+### AST-Based Semantic Analysis (Phase 3)
+
+pi-safe-shell uses **tree-sitter-bash** to parse and analyze shell commands semantically. This detects dangerous patterns that simple regex matching would miss:
+
+**Detection Capabilities:**
+- **Intent classification** - 12 intent types (Delete, Network, Execute, CodeExecution, etc.)
+- **Path scope analysis** - System (`/etc`), home (`~`), project (`./`), temp (`/tmp`)
+- **Dangerous flags** - `-rf`, `-R`, `-f`, `--force`, `--no-preserve-root` (context-aware)
+- **Pipeline patterns** - `curl|bash`, `wget|bash`, data exfiltration (`cat .env|curl`)
+- **Command chaining** - `&&`, `||`, `;` operators analyzed for each command in chain
+- **Interpreter detection** - `python -c`, `node -e`, `sh -c`, `bash -c`, `eval`
+- **Inline code parsing** - Recursively analyzes code inside `-c/-e` flags
+
+**Risk Levels:**
+- **🟢 Safe (≤20)** - Info queries, reads, benign operations
+- **🟡 Caution (21-50)** - Writes, git changes, inline code execution
+- **🟠 Danger (51-80)** - Deletes, privilege escalation, network operations
+- **🔴 Critical (81-100)** - Destructive ops (`rm -rf /`), RCE (`curl|bash`), data exfil
+
+**Blocking Policy:**
+- **Critical (≥81)** - Auto-blocked in all modes except YOLO
+- **Danger (51-80)** - Requires confirmation in `ask` mode
+- **Caution/Safe** - Allowed with logging
+
+See [INLINE_CODE_PARSING.md](INLINE_CODE_PARSING.md) and [COMMAND_CHAINING_ANALYSIS.md](COMMAND_CHAINING_ANALYSIS.md) for implementation details.
+
 ### Switch modes mid-session
 
 ```
