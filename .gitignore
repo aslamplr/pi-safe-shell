@@ -32,3 +32,4 @@ Thumbs.db
 tmp/
 temp/
 *.tmp
+graphify-out/

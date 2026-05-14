@@ -448,6 +448,18 @@ Publishing to npm is a **manual, explicit decision** to ensure stability and pre
 
 ## Changelog
 
+### v0.3.1 (2026-05-14)
+
+**Critical Fix: NPM Package** 🐛
+
+- ✅ **Include `src/` directory** in npm package files array
+- ✅ **Move tree-sitter dependencies** from devDependencies to dependencies
+  - `tree-sitter-bash` (^0.25.1) - runtime required
+  - `web-tree-sitter` (^0.26.8) - runtime required
+- ✅ **Fix:** "Cannot find module './src/ast-analyzer'" error on npm install
+
+**Note:** v0.3.0 was yanked from npm due to missing src/ directory. Use v0.3.1 instead.
+
 ### v0.3.0 (2026-05-14)
 
 **Phase 3: AST-Based Blocking** 🎉
