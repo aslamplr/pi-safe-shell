@@ -197,6 +197,187 @@ function ensureGlobalConfigExists(): void {
 }
 
 // ============================================================
+// Shell Command Analysis Helpers
+// ============================================================
+
+/**
+ * Format AST analysis result into user-friendly block message
+ */
+function formatShellBlockMessage(analysis: ReturnType<typeof analyzeCommand>, riskResult: ReturnType<typeof scoreCommand>, command: string): string {
+  const emoji = riskResult.level === "critical" ? "🔒" : "⚠️";
+  
+  let message = `${emoji} Dangerous Shell Command Detected (${riskResult.level.toUpperCase()}: ${riskResult.score}/100)\n\n`;
+  message += `Command: ${command}\n\n`;
+  
+  // Show intent classification
+  if (analysis.intent && analysis.intent.length > 0) {
+    const intentLabels = analysis.intent.map(i => i.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())).join(', ');
+    message += `Intent: ${intentLabels}\n\n`;
+  }
+  
+  // Show risk factors
+  if (riskResult.riskFactors && riskResult.riskFactors.length > 0) {
+    message += `Risk Factors:\n`;
+    for (const factor of riskResult.riskFactors) {
+      message += `  • ${formatRiskFactor(factor)}\n`;
+    }
+    message += "\n";
+  }
+  
+  // Show reasons for the score
+  if (riskResult.reasons && riskResult.reasons.length > 0) {
+    message += `Detection Reasons:\n`;
+    for (const reason of riskResult.reasons.slice(0, 5)) { // Limit to top 5
+      message += `  • ${reason}\n`;
+    }
+    message += "\n";
+  }
+  
+  message += "Why This Is Dangerous:\n";
+  message += `  ${getShellDangerExplanation(riskResult)}\n`;
+  
+  message += "\nSafer Alternatives:\n";
+  const alternatives = getShellSaferAlternatives(riskResult);
+  for (const alt of alternatives) {
+    message += `  • ${alt}\n`;
+  }
+  
+  message += "\nOverride:\n";
+  message += "  Use the safe_shell_approve tool to allow this command for this session.\n";
+  
+  return message;
+}
+
+/**
+ * Format risk factor into human-readable label
+ */
+function formatRiskFactor(factor: string): string {
+  return factor
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, l => l.toUpperCase());
+}
+
+/**
+ * Get explanation of why shell command is dangerous
+ */
+function getShellDangerExplanation(riskResult: ReturnType<typeof scoreCommand>): string {
+  const factors = riskResult.riskFactors || [];
+  
+  if (factors.includes("system_path")) {
+    return "This command targets system directories (/etc, /usr, /bin) which are critical for OS operation. " +
+           "Modifying or deleting these files could render the system unbootable.";
+  }
+  if (factors.includes("home_path")) {
+    return "This command targets user home directories which contain personal data, credentials, and configurations. " +
+           "Destructive operations here could result in permanent data loss.";
+  }
+  if (factors.includes("recursive_operation")) {
+    return "This command uses recursive flags (-r, -R, --recursive) which can delete or modify entire directory trees. " +
+           "Combined with destructive operations, this amplifies the potential damage.";
+  }
+  if (factors.includes("force_flag")) {
+    return "This command uses force flags (-f, --force) which bypass confirmation prompts and error handling. " +
+           "This prevents safety checks and can lead to unintended consequences.";
+  }
+  if (factors.includes("remote_code_execution")) {
+    return "This command downloads and executes code from remote sources (curl|bash, wget|bash). " +
+           "This is a common attack vector for malware and supply chain compromise.";
+  }
+  if (factors.includes("data_exfiltration")) {
+    return "This command sends data to external servers, potentially exfiltrating sensitive information. " +
+           "Combined with file read operations, this is a data breach pattern.";
+  }
+  if (factors.includes("destructive_operation")) {
+    return "This command performs destructive operations (delete, format, overwrite) that permanently modify or destroy data. " +
+           "These operations are often irreversible.";
+  }
+  if (factors.includes("privilege_escalation")) {
+    return "This command uses elevated privileges (sudo, su) to bypass permission restrictions. " +
+           "Combined with destructive operations, this can damage system integrity.";
+  }
+  if (factors.includes("inline_code_execution")) {
+    return "This command executes code via interpreters (bash -c, python -c, eval). " +
+           "This bypasses shell analysis and can perform arbitrary operations.";
+  }
+  if (factors.includes("obfuscated_code_execution")) {
+    return "This command uses obfuscation (base64, encoding) to hide its true intent. " +
+           "Obfuscation is commonly used to evade security analysis.";
+  }
+  if (factors.includes("chained_command")) {
+    return "This command chains multiple operations together (&&, ||, ;). " +
+           "Each command in the chain is executed, potentially compounding risks.";
+  }
+  if (factors.includes("fork_bomb")) {
+    return "This command creates a fork bomb that spawns infinite processes. " +
+           "This will exhaust system resources and crash the machine.";
+  }
+  
+  return "This command contains patterns that may be dangerous depending on context and usage. " +
+         "Review the risk factors and detection reasons above.";
+}
+
+/**
+ * Get safer alternative suggestions for shell commands
+ */
+function getShellSaferAlternatives(riskResult: ReturnType<typeof scoreCommand>): string[] {
+  const alternatives: string[] = [];
+  const factors = riskResult.riskFactors || [];
+  
+  if (factors.includes("system_path")) {
+    alternatives.push("Use project-relative paths (./build, ./dist) instead of absolute system paths");
+    alternatives.push("Add path validation to ensure target is within project directory");
+  }
+  if (factors.includes("home_path")) {
+    alternatives.push("Use temporary directories (/tmp, ./tmp) for test data");
+    alternatives.push("Avoid operations in user home directories unless absolutely necessary");
+  }
+  if (factors.includes("recursive_operation")) {
+    alternatives.push("Use non-recursive operations when possible (rm file instead of rm -r dir)");
+    alternatives.push("Preview with ls -la before destructive recursive operations");
+    alternatives.push("Use dry-run flags (--dry-run, -n) when available");
+  }
+  if (factors.includes("force_flag")) {
+    alternatives.push("Remove -f flag to allow confirmation prompts");
+    alternatives.push("Use interactive mode (-i) for destructive operations");
+  }
+  if (factors.includes("remote_code_execution")) {
+    alternatives.push("Download code first, review it, then execute separately");
+    alternatives.push("Use package managers (npm, pip, apt) instead of curl|bash");
+    alternatives.push("Verify checksums and signatures before executing remote code");
+  }
+  if (factors.includes("data_exfiltration")) {
+    alternatives.push("Avoid sending sensitive data (SSH keys, credentials, .env files) over network");
+    alternatives.push("Use encrypted connections (HTTPS, SSH) for all network operations");
+    alternatives.push("Validate destination URLs against allowlist");
+  }
+  if (factors.includes("destructive_operation")) {
+    alternatives.push("Use version control (git) to track changes before destructive operations");
+    alternatives.push("Create backups before destructive operations");
+    alternatives.push("Use trash/rm-trash instead of rm for reversible deletion");
+  }
+  if (factors.includes("privilege_escalation")) {
+    alternatives.push("Run without sudo if possible (check file permissions)");
+    alternatives.push("Use specific sudo commands instead of sudo -i or sudo su");
+    alternatives.push("Configure sudoers for specific commands without password");
+  }
+  if (factors.includes("inline_code_execution")) {
+    alternatives.push("Write code to a file and execute the file instead of inline");
+    alternatives.push("Use shell scripts for complex operations (easier to review and audit)");
+  }
+  if (factors.includes("chained_command")) {
+    alternatives.push("Break command chains into separate, reviewable steps");
+    alternatives.push("Execute each command individually and verify results");
+  }
+  
+  if (alternatives.length === 0) {
+    alternatives.push("Review command intent and ensure it matches expected behavior");
+    alternatives.push("Consider using safer built-in tools (run_tests, git_status, list_files)");
+  }
+  
+  return alternatives;
+}
+
+// ============================================================
 // Code Analysis Helpers
 // ============================================================
 
@@ -459,7 +640,7 @@ async function checkShellCommand(
       if (riskResult.level === 'critical') {
         return {
           block: true,
-          reason: `🚨 AST analysis detected CRITICAL risk (${riskResult.score}): ${riskResult.reasons.join(', ')}\n\n  Command: ${truncate(command, 200)}\n  Risk factors: ${riskResult.riskFactors.join(', ')}\n\n  This command pattern is known to be destructive or dangerous.\n  Use safe_shell_approve tool to allow this specific command if you're sure it's safe.`,
+          reason: formatShellBlockMessage(astAnalysis, riskResult, command),
         };
       }
       
@@ -468,7 +649,7 @@ async function checkShellCommand(
         if (mode === 'ask') {
           return {
             block: true,
-            reason: `⚠️ AST analysis detected DANGER level risk (${riskResult.score}): ${riskResult.reasons.join(', ')}\n\n  Command: ${truncate(command, 200)}\n  Risk factors: ${riskResult.riskFactors.join(', ')}\n\n  This command may be dangerous. Please confirm with safe_shell_approve tool.`,
+            reason: formatShellBlockMessage(astAnalysis, riskResult, command),
           };
         }
       }
@@ -804,6 +985,10 @@ export default function (pi: ExtensionAPI) {
       
       const filePath = (input?.path as string) || "";
       const analysis = analyzeCode(code, filePath);
+      
+      // Resolve mode for code analysis
+      const merged = mergeConfigs(globalConfig, projectConfig);
+      const mode = effectiveMode();
       
       // Block critical-level code in all modes except YOLO
       if (analysis.level === "critical" && mode !== "yolo") {
