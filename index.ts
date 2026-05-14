@@ -26,6 +26,10 @@
  *   /safe-shell mode block|ask|whitelist|yolo  — Switch mode
  *   /safe-shell allow <command> [--project]  — Add approval (--project persists to .pi/pi-safe-shell.json)
  *   /safe-shell deny <command> [--project]   — Remove approval (--project removes from project whitelist)
+ *   /safe-shell threshold <type> <value>     — Set risk thresholds (critical/danger/caution)
+ *   /safe-shell learning on|off|status       — Toggle learning mode
+ *   /safe-shell debug on|off|status          — Toggle debug mode
+ *   /safe-shell audit status|on|off          — Audit log commands to .pi/safe-shell-audit.jsonl
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -63,6 +67,9 @@ interface GlobalConfig {
   learningMinUses: number;    // Times a command must be allowed before auto-whitelist
   // Project-aware paths (safe by default)
   safeProjectPaths: string[]; // Paths that are auto-allowed
+  // Observability
+  auditLogEnabled: boolean;   // Log all commands to .pi/safe-shell-audit.jsonl
+  debugMode: boolean;         // Show AST parse trees and scoring breakdown
 }
 
 interface SessionState {
@@ -157,6 +164,9 @@ const DEFAULT_CONFIG: GlobalConfig = {
     './node_modules', './.git', './tmp',
     './package.json', './tsconfig.json',
   ],
+  // Observability (off by default to avoid overhead)
+  auditLogEnabled: true,
+  debugMode: false,
 };
 
 const execP = promisify(execFile);
@@ -209,6 +219,8 @@ function mergeConfigs(
     learningMode: project.learningMode ?? global.learningMode,
     learningMinUses: project.learningMinUses ?? global.learningMinUses,
     safeProjectPaths: project.safeProjectPaths ?? global.safeProjectPaths,
+    auditLogEnabled: project.auditLogEnabled ?? global.auditLogEnabled,
+    debugMode: project.debugMode ?? global.debugMode,
   };
 }
 
@@ -232,7 +244,7 @@ function ensureGlobalConfigExists(): void {
 /**
  * Format AST analysis result into user-friendly block message
  */
-function formatShellBlockMessage(analysis: ReturnType<typeof analyzeCommand>, riskResult: ReturnType<typeof scoreCommand>, command: string): string {
+function formatShellBlockMessage(analysis: ReturnType<typeof analyzeCommand>, riskResult: ReturnType<typeof scoreCommand>, command: string, debugMode?: boolean): string {
   const emoji = riskResult.level === "critical" ? "🔒" : "⚠️";
   
   let message = `${emoji} Dangerous Shell Command Detected (${riskResult.level.toUpperCase()}: ${riskResult.score}/100)\n\n`;
@@ -273,6 +285,11 @@ function formatShellBlockMessage(analysis: ReturnType<typeof analyzeCommand>, ri
   
   message += "\nOverride:\n";
   message += "  Use the safe_shell_approve tool to allow this command for this session.\n";
+  
+  // Add debug info when in debug mode
+  if (debugMode) {
+    message += "\n\n" + formatDebugAnalysis(analysis, riskResult);
+  }
   
   return message;
 }
@@ -709,7 +726,7 @@ async function checkShellCommand(
       if (effectiveLevel === 'critical') {
         return {
           block: true,
-          reason: formatShellBlockMessage(astAnalysis, riskResult, command),
+          reason: formatShellBlockMessage(astAnalysis, riskResult, command, mergedConfig.debugMode),
         };
       }
       
@@ -717,7 +734,7 @@ async function checkShellCommand(
       if (effectiveLevel === 'danger' && mode === 'ask') {
         return {
           block: true,
-          reason: formatShellBlockMessage(astAnalysis, riskResult, command),
+          reason: formatShellBlockMessage(astAnalysis, riskResult, command, mergedConfig.debugMode),
         };
       }
       //   };
@@ -896,6 +913,117 @@ function trackLearningCommand(
       console.log(`[pi-safe-shell] Learning mode: auto-whitelisted "${command}" after ${current} uses`);
     }
   }
+}
+
+// ============================================================
+// Observability
+// ============================================================
+
+/**
+ * Audit log entry structure
+ */
+interface AuditEntry {
+  timestamp: string;
+  command: string;
+  tool: string;
+  score: number;
+  level: string;
+  riskFactors: string[];
+  decision: 'allowed' | 'blocked' | 'confirmed' | 'auto_whitelisted';
+  mode: string;
+  filePath?: string;
+}
+
+/**
+ * Append an entry to the audit log
+ */
+function appendAuditLog(entry: AuditEntry, cwd: string): void {
+  const auditDir = join(cwd, '.pi');
+  const auditPath = join(auditDir, 'safe-shell-audit.jsonl');
+  
+  try {
+    if (!existsSync(auditDir)) {
+      mkdirSync(auditDir, { recursive: true });
+    }
+    const line = JSON.stringify(entry) + '\n';
+    writeFileSync(auditPath, line, { flag: 'as' }); // append mode
+  } catch {
+    // Silently fail - audit logging is best-effort
+  }
+}
+
+/**
+ * Get summary statistics from the audit log
+ */
+function getAuditSummary(cwd: string): string {
+  const auditPath = join(cwd, '.pi', 'safe-shell-audit.jsonl');
+  if (!existsSync(auditPath)) return '(no audit data yet)';
+  
+  try {
+    const content = readFileSync(auditPath, 'utf-8');
+    const lines = content.trim().split('\n').filter(Boolean);
+    if (lines.length === 0) return '(no audit data yet)';
+    
+    const entries = lines.map(l => JSON.parse(l) as AuditEntry);
+    const total = entries.length;
+    const blocked = entries.filter(e => e.decision === 'blocked').length;
+    const allowed = entries.filter(e => e.decision === 'allowed').length;
+    const confirmed = entries.filter(e => e.decision === 'confirmed').length;
+    const avgScore = Math.round(entries.reduce((s, e) => s + e.score, 0) / total);
+    
+    // Count top risk factors
+    const factorCounts: Record<string, number> = {};
+    for (const e of entries) {
+      for (const f of e.riskFactors) {
+        factorCounts[f] = (factorCounts[f] || 0) + 1;
+      }
+    }
+    const topFactors = Object.entries(factorCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([f, c]) => `    ${f.replace(/_/g, ' ')}: ${c}x`)
+      .join('\n');
+    
+    return [
+      `Audit Log: ${total} entries`,
+      `  Blocked:   ${blocked}`,
+      `  Allowed:   ${allowed}`,
+      `  Confirmed: ${confirmed}`,
+      `  Avg Score: ${avgScore}/100`,
+      topFactors ? `  Top Risk Factors:\n${topFactors}` : '',
+    ].filter(Boolean).join('\n');
+  } catch {
+    return '(error reading audit log)';
+  }
+}
+
+/**
+ * Format debug info showing AST analysis details
+ */
+function formatDebugAnalysis(astAnalysis: ReturnType<typeof analyzeCommand>, riskResult: ReturnType<typeof scoreCommand>): string {
+  const lines: string[] = [];
+  lines.push('--- AST Analysis (debug) ---');
+  lines.push(`  Executable: ${astAnalysis.executable || '(none)'}`);
+  lines.push(`  Args: [${astAnalysis.args.join(', ')}]`);
+  lines.push(`  Flags: [${astAnalysis.flags.join(', ')}]`);
+  lines.push(`  Paths: [${astAnalysis.paths.join(', ')}]`);
+  lines.push(`  Has Pipe: ${astAnalysis.hasPipe}`);
+  lines.push(`  Has Redirect: ${astAnalysis.hasRedirect}`);
+  lines.push(`  Inline Code: ${astAnalysis.inlineCode ? astAnalysis.inlineCode.slice(0, 100) : '(none)'}`);
+  lines.push(`  Intent: ${astAnalysis.intent.join(', ')}`);
+  lines.push('--- Risk Scoring (debug) ---');
+  lines.push(`  Score: ${riskResult.score}`);
+  lines.push(`  Level: ${riskResult.level}`);
+  lines.push(`  Reasons (${riskResult.reasons.length}):`);
+  for (const reason of riskResult.reasons) {
+    lines.push(`    - ${reason}`);
+  }
+  lines.push(`  Risk Factors (${riskResult.riskFactors.length}):`);
+  for (const factor of riskResult.riskFactors) {
+    lines.push(`    - ${factor}`);
+  }
+  lines.push('-----------------------------');
+  return lines.join('\n');
 }
 
 // ============================================================
@@ -1102,19 +1230,48 @@ export default function (pi: ExtensionAPI) {
       // Use configurable thresholds from merged config
       const effectiveLevel = scoreToLevel(analysis.score, merged);
       
+      // Audit log code analysis results
+      if (merged.auditLogEnabled) {
+        appendAuditLog({
+          timestamp: new Date().toISOString(),
+          command: filePath || '(inline code)',
+          tool: event.toolName || 'write/edit',
+          score: analysis.score,
+          level: effectiveLevel,
+          riskFactors: analysis.riskFactors,
+          decision: effectiveLevel === 'critical' ? 'blocked' : effectiveLevel === 'danger' ? 'confirmed' : 'allowed',
+          mode: mode,
+          filePath: filePath || undefined,
+        }, ctx.cwd);
+      }
+      
       // Block critical-level code in all modes except YOLO
       if (effectiveLevel === "critical" && mode !== "yolo") {
+        let message = formatCodeBlockMessage(analysis, filePath);
+        if (merged.debugMode && analysis.dangerousCalls.length > 0) {
+          message += `\n\n--- Debug: Matched Patterns ---\n`;
+          for (const call of analysis.dangerousCalls) {
+            message += `  ${call.api} (${call.severity}): ${call.description || 'no description'}\n`;
+          }
+        }
         return {
           block: true,
-          reason: formatCodeBlockMessage(analysis, filePath),
+          reason: message,
         };
       }
       
       // Require confirmation for danger-level in ask mode
       if (effectiveLevel === "danger" && mode === "ask") {
+        let message = formatCodeBlockMessage(analysis, filePath);
+        if (merged.debugMode && analysis.dangerousCalls.length > 0) {
+          message += `\n\n--- Debug: Matched Patterns ---\n`;
+          for (const call of analysis.dangerousCalls) {
+            message += `  ${call.api} (${call.severity}): ${call.description || 'no description'}\n`;
+          }
+        }
         const ok = await ctx.ui.confirm(
           "⚠️ Dangerous Code Detected",
-          formatCodeBlockMessage(analysis, filePath),
+          message,
           { confirmText: "Allow", cancelText: "Block" }
         );
         if (!ok) {
@@ -1150,6 +1307,21 @@ export default function (pi: ExtensionAPI) {
         if (fresh) projectConfig = fresh;
       });
       if (result !== undefined) {
+        // Audit log blocked/confirmed commands
+        if (merged.auditLogEnabled) {
+          const isBlocked = result.block;
+          appendAuditLog({
+            timestamp: new Date().toISOString(),
+            command: cmd,
+            tool: tool || 'unknown',
+            score: 0,
+            level: 'blocked_by_policy',
+            riskFactors: [],
+            decision: isBlocked ? 'blocked' : 'confirmed',
+            mode: mode,
+          }, ctx.cwd);
+        }
+        
         // For batch tools, prefix with the failing command info
         if (commands && result.block) {
           result.reason =
@@ -1158,6 +1330,20 @@ export default function (pi: ExtensionAPI) {
             `  ${result.reason ?? "blocked"}`;
         }
         return result;
+      } else {
+        // Audit log allowed commands
+        if (merged.auditLogEnabled) {
+          appendAuditLog({
+            timestamp: new Date().toISOString(),
+            command: cmd,
+            tool: tool || 'unknown',
+            score: 0,
+            level: 'allowed',
+            riskFactors: [],
+            decision: 'allowed',
+            mode: mode,
+          }, ctx.cwd);
+        }
       }
     }
 
@@ -1441,6 +1627,8 @@ export default function (pi: ExtensionAPI) {
           `║  Denylist:  ${merged.denylist.length.toString().padEnd(3)} pattern(s)                     ║`,
           `║  Threshold: ${merged.cautionThreshold}-${merged.dangerThreshold}-${merged.criticalThreshold} (cau-dan-cri)        ║`,
           `║  Learning:  ${(merged.learningMode ? "ON" : "OFF").padEnd(31)}║`,
+          `║  Debug:     ${(merged.debugMode ? "ON" : "OFF").padEnd(31)}║`,
+          `║  Audit:     ${(merged.auditLogEnabled ? "ON" : "OFF").padEnd(31)}║`,
           "╚═══════════════════════════════════════════╝",
           "",
           "Commands:",
@@ -1450,6 +1638,8 @@ export default function (pi: ExtensionAPI) {
           "  /safe-shell deny <command> [--project]    Remove approval",
           "  /safe-shell threshold <type> <val>         Set risk threshold",
           "  /safe-shell learning on|off|status         Toggle learning mode",
+          "  /safe-shell debug on|off|status            Toggle debug mode",
+          "  /safe-shell audit status|on|off            Audit log summary",
         ];
 
         if (tempApprovals.length > 0) {
@@ -1670,9 +1860,48 @@ export default function (pi: ExtensionAPI) {
           return;
         }
 
+        case "debug": {
+          const debugValue = value.trim().toLowerCase();
+          if (debugValue === "on" || debugValue === "enable" || debugValue === "true") {
+            globalConfig.debugMode = true;
+            ctx.ui.notify(
+              "Debug mode enabled: AST parse trees and scoring breakdown will appear in block messages.",
+              "info",
+            );
+          } else if (debugValue === "off" || debugValue === "disable" || debugValue === "false") {
+            globalConfig.debugMode = false;
+            ctx.ui.notify("Debug mode disabled.", "info");
+          } else if (debugValue === "status" || debugValue === "") {
+            ctx.ui.notify(
+              `Debug mode: ${globalConfig.debugMode ? "ON" : "OFF"}`,
+              "info",
+            );
+          } else {
+            ctx.ui.notify("Usage: /safe-shell debug on|off|status", "error");
+          }
+          return;
+        }
+
+        case "audit": {
+          const auditValue = value.trim().toLowerCase();
+          if (auditValue === "status" || auditValue === "summary" || auditValue === "") {
+            const summary = getAuditSummary(ctx.cwd);
+            ctx.ui.notify(`pi-safe-shell Audit Summary\n\n${summary}`, "info");
+          } else if (auditValue === "on" || auditValue === "enable") {
+            globalConfig.auditLogEnabled = true;
+            ctx.ui.notify("Audit logging enabled.", "info");
+          } else if (auditValue === "off" || auditValue === "disable") {
+            globalConfig.auditLogEnabled = false;
+            ctx.ui.notify("Audit logging disabled.", "info");
+          } else {
+            ctx.ui.notify("Usage: /safe-shell audit status|on|off", "error");
+          }
+          return;
+        }
+
         default:
           ctx.ui.notify(
-            `Unknown subcommand: ${subcommand}. Use mode, allow, deny, threshold, or learning.`,
+            `Unknown subcommand: ${subcommand}. Use mode, allow, deny, threshold, learning, debug, or audit.`,
             "error",
           );
       }
