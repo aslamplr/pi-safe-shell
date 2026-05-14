@@ -28,13 +28,16 @@
   },
   "files": [
     "index.ts",
-    "README.md"
+    "README.md",
+    "src/"
   ],
+  "dependencies": {
+    "tree-sitter-bash": "^0.25.1",
+    "web-tree-sitter": "^0.26.8"
+  },
   "devDependencies": {
     "@types/node": "^25.7.0",
-    "tree-sitter-bash": "^0.25.1",
     "typescript": "^5.8.3",
-    "vitest": "^4.1.6",
-    "web-tree-sitter": "^0.26.8"
+    "vitest": "^4.1.6"
   }
 }
