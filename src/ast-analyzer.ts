@@ -192,6 +192,48 @@ export function analyzeCommand(command: string): CommandAnalysis {
       }
     }
     
+    // Extract command substitution ($(cmd) or `cmd`)
+    if (node.type === 'command_substitution') {
+      if (!result.flags.includes('has_substitution')) {
+        result.flags.push('has_substitution');
+      }
+      // The content of command substitution is the text inside $()
+      // We store it for recursive analysis in scoring
+      const innerText = node.text;
+      if (innerText && innerText.length > 2) {
+        // Strip the $() wrapper to get the actual command
+        const commandText = innerText.startsWith('$(') 
+          ? innerText.slice(2, -1) 
+          : innerText;
+        if (!result.args.includes(`__cmdsub__:${commandText}`)) {
+          result.args.push(`__cmdsub__:${commandText}`);
+        }
+      }
+    }
+    
+    // Extract variable expansions ($VAR, ${VAR})
+    if (node.type === 'variable_expansion' || node.type === 'variable_name') {
+      // For simple $VAR expansions, the variable name is the node text without $
+      // For ${VAR} expansions, it's wrapped in ${}
+      let varName = node.text;
+      if (varName.startsWith('$')) varName = varName.slice(1);
+      if (varName.startsWith('{')) varName = varName.slice(1, -1);
+      
+      if (!result.flags.includes(`uses_var:${varName}`)) {
+        result.flags.push(`uses_var:${varName}`);
+      }
+    }
+    
+    // Extract heredoc body
+    if (node.type === 'heredoc_body') {
+      const bodyText = node.text;
+      if (bodyText && bodyText.trim().length > 0) {
+        if (!result.args.includes(`__heredoc__:${bodyText}`)) {
+          result.args.push(`__heredoc__:${bodyText}`);
+        }
+      }
+    }
+    
     // Extract flags and arguments from word nodes
     // tree-sitter-bash doesn't distinguish flags from words, so we check manually
     if (node.type === 'word') {
@@ -686,6 +728,88 @@ export function scoreCommand(analysis: CommandAnalysis): RiskResult {
         reasons.push('rm -rf in project directory');
         riskFactors.push('recursive_delete');
       }
+    }
+  }
+  
+  // 9. Command substitution analysis
+  const cmdSubs = analysis.args.filter(a => a.startsWith('__cmdsub__:'));
+  for (const sub of cmdSubs) {
+    const innerCommand = sub.slice('__cmdsub__:'.length);
+    if (!innerCommand) continue;
+    if (/\brm\s+[-]rf\b/i.test(innerCommand)) {
+      score += 50; reasons.push('cmdsub contains rm -rf'); riskFactors.push('destructive_substitution');
+    }
+    if (/\b(curl|wget)\b/.test(innerCommand)) {
+      score += 35; reasons.push('cmdsub contains network op'); riskFactors.push('network_substitution');
+    }
+    if (/\b(dd|mkfs|fdisk|parted)\b/i.test(innerCommand)) {
+      score += 50; reasons.push('cmdsub contains critical cmd'); riskFactors.push('critical_substitution');
+    }
+    if (/\beval\b/.test(innerCommand)) {
+      score += 45; reasons.push('cmdsub contains eval'); riskFactors.push('eval_in_substitution');
+    }
+    if (/\b(sudo|su)\b/.test(innerCommand)) {
+      score += 25; reasons.push('cmdsub contains privilege'); riskFactors.push('privilege_in_substitution');
+    }
+    if (/\b(base64|atob)\s+[-]d\b/i.test(innerCommand)) {
+      score += 40; reasons.push('cmdsub contains base64'); riskFactors.push('obfuscated_substitution');
+    }
+    if (innerCommand.includes('$(')) {
+      score += 20; reasons.push('nested cmdsub'); riskFactors.push('nested_substitution');
+    }
+    if (/\b(curl|wget)\b.*\|.*\b(bash|sh|zsh)\b/i.test(innerCommand)) {
+      score += 40; reasons.push('cmdsub contains RCE'); riskFactors.push('rce_in_substitution');
+    }
+  }
+  
+  // 10. Variable expansion analysis
+  const vars = analysis.flags.filter(f => f.startsWith('uses_var:'));
+  for (const v of vars) {
+    const varName = v.slice('uses_var:'.length);
+    if (!varName) continue;
+    if (['HOME','USER','PASSWORD','API_KEY','TOKEN','SECRET','SSH_KEY'].includes(varName)) {
+      score += 15; reasons.push(`sensitive variable: $${varName}`); riskFactors.push('sensitive_variable');
+    }
+    if (['PATH','LD_PRELOAD','LD_LIBRARY_PATH','PYTHONPATH','NODE_PATH'].includes(varName)) {
+      score += 20; reasons.push(`env variable: $${varName}`); riskFactors.push('env_variable_modification');
+    }
+    if (['IFS','BASH_ENV','SHELLOPTS','BASHOPTS'].includes(varName)) {
+      score += 25; reasons.push(`shell variable: $${varName}`); riskFactors.push('shell_control_variable');
+    }
+    if (/\brm\s+[-]rf\b/i.test(analysis.command) && !['HOME','PATH','IFS'].includes(varName)) {
+      score += 10; reasons.push('var with destructive cmd'); riskFactors.push('variable_with_destructive');
+    }
+  }
+  
+  // 11. Heredoc body analysis
+  const heredocs = analysis.args.filter(a => a.startsWith('__heredoc__:'));
+  for (const h of heredocs) {
+    const body = h.slice('__heredoc__:'.length);
+    if (!body) continue;
+    if (/\brm\s+[-]rf\b/i.test(body)) {
+      score += 45; reasons.push('heredoc has rm -rf'); riskFactors.push('destructive_heredoc');
+    }
+    if (/\b(curl|wget|bash|sh|zsh)\b.*\|.*\b(bash|sh|zsh)\b/i.test(body)) {
+      score += 50; reasons.push('heredoc has RCE'); riskFactors.push('rce_in_heredoc');
+    }
+    if (/\b(eval|exec)\b/i.test(body)) {
+      score += 40; reasons.push('heredoc has eval/exec'); riskFactors.push('eval_in_heredoc');
+    }
+    if (/\b(base64|atob)\b/i.test(body)) {
+      score += 30; reasons.push('heredoc has obfuscation'); riskFactors.push('obfuscated_heredoc');
+    }
+    if (/\b(sudo|su)\b/.test(body)) {
+      score += 20; reasons.push('heredoc has sudo'); riskFactors.push('privilege_in_heredoc');
+    }
+  }
+  
+  // 12. Eval with substitution
+  if (analysis.executable === 'eval') {
+    if (analysis.args.some(a => a.startsWith('__cmdsub__:'))) {
+      score += 30; reasons.push('eval with cmdsub'); riskFactors.push('eval_with_substitution');
+    }
+    if (/\b(curl|wget)\b/.test(analysis.command)) {
+      score += 30; reasons.push('eval with network'); riskFactors.push('eval_with_network');
     }
   }
   
