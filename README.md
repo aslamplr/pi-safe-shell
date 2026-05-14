@@ -7,8 +7,12 @@ A [Pi](https://github.com/earendil-works/pi-coding-agent) extension that gates b
 > Default: **🔒 Block** mode — the agent cannot run any shell commands unless you explicitly allow them.
 > 
 > **New:** **🚀 YOLO** mode — allow everything except denylist items. Use with extreme caution.
+> 
+> **New in v0.3.0:** **AST-based semantic analysis** with auto-blocking for critical risks.
 
 **Repository:** [github.com/aslamplr/pi-safe-shell](https://github.com/aslamplr/pi-safe-shell)
+
+**Version:** 0.3.0
 
 ---
 
@@ -439,6 +443,59 @@ Publishing to npm is a **manual, explicit decision** to ensure stability and pre
 **Package already exists:**
 - Version must be unique - bump version in package.json
 - npm does not allow overwriting published versions
+
+---
+
+## Changelog
+
+### v0.3.0 (2026-05-14)
+
+**Phase 3: AST-Based Blocking** 🎉
+
+- ✅ **Auto-block CRITICAL risks** (score ≥81) in all modes except YOLO
+  - Destructive ops: `rm -rf /`, `dd if=/dev/zero`, `mkfs`, `fdisk`
+  - RCE patterns: `curl|bash`, `wget|sh`
+  - Interpreter attacks: `sh -c "..."`, `python -c "..."`, `node -e "..."`
+  - Command chaining: `&&`, `||`, `;` with destructive ops
+  - Data exfiltration: `cat|curl`, `tar|wget`
+- ✅ **Require confirmation for DANGER risks** (51-80) in `ask` mode
+- ✅ **Inline code parsing** - Extract and analyze code from `-c/-e` flags
+- ✅ **Command chaining detection** - Analyze each command in chains
+- ✅ **Interpreter bypass detection** - Detect `python -c`, `node -e`, `sh -c`, `bash -c`
+- ✅ **12 intent types** - Delete, Network, Execute, CodeExecution, etc.
+- ✅ **Path scope analysis** - System, home, project, temp paths
+- ✅ **Risk factor tracking** - 25+ risk factors for enhanced diagnostics
+- 📚 **Documentation:**
+  - `INLINE_CODE_PARSING.md` - Inline code extraction implementation
+  - `COMMAND_CHAINING_ANALYSIS.md` - Chaining detection implementation
+  - `PHASE_3_BLOCKING.md` - Phase 3 blocking policy and examples
+  - `AST_ANALYZER_TEST_RESULTS.md` - Comprehensive test report
+
+**Test Results:** 88.1% pass rate (37/42 tests)
+
+**Dependencies:**
+- Added: `tree-sitter-bash` (^0.25.1)
+- Added: `web-tree-sitter` (^0.26.8)
+
+### v0.2.0 (2026-05-13)
+
+**YOLO Mode + CI/CD**
+
+- ✅ Added **YOLO mode** - Allow everything except denylist items
+- ✅ Created GitHub Actions workflows (ci.yml, cd.yml)
+- ✅ Updated README with installation instructions
+- ✅ Added Limitations & Warnings section
+- ✅ Added No Warranty section
+- ✅ Scoped npm package: `@aslamplr/pi-safe-shell`
+
+### v0.1.0 (2026-05-12)
+
+**Initial Release**
+
+- ✅ Four security modes: Block, Ask, Whitelist, YOLO
+- ✅ Pattern-based denylist/whitelist matching
+- ✅ Session-level temp approvals
+- ✅ Heuristic detection for JS/Python `ctx_execute`
 
 ---
 
