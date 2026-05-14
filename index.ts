@@ -38,6 +38,7 @@ import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { promisify } from "node:util";
 import { initParser, analyzeCommand, scoreCommand, isParserInitialized } from "./src/ast-analyzer";
+import { analyzeCode, formatCodeAnalysis, CodeAnalysis } from "./src/code-analyzer";
 
 // ============================================================
 // Types
@@ -193,6 +194,130 @@ function ensureGlobalConfigExists(): void {
   } catch {
     // filesystem errors are non-fatal; extension works with defaults
   }
+}
+
+// ============================================================
+// Code Analysis Helpers
+// ============================================================
+
+/**
+ * Format code analysis result into user-friendly block message
+ */
+function formatCodeBlockMessage(analysis: CodeAnalysis, filePath: string): string {
+  const emoji = analysis.level === "critical" ? "🔒" : "⚠️";
+  
+  let message = `${emoji} Dangerous Code Detected (${analysis.level.toUpperCase()}: ${analysis.score}/100)\n\n`;
+  message += `Language: ${analysis.language}\n`;
+  if (filePath) {
+    message += `File: ${filePath}\n`;
+  }
+  message += "\n";
+  
+  if (analysis.obfuscationDetected) {
+    message += `⚠️ Obfuscation Detected: ${analysis.obfuscationPatterns.join(", ")}\n\n`;
+  }
+  
+  message += `Dangerous API Calls (${analysis.dangerousCalls.length}):\n`;
+  for (const call of analysis.dangerousCalls) {
+    message += `  • ${call.api} (${call.severity}) at ${call.location}\n`;
+    if (call.argument) {
+      const argPreview = call.argument.length > 60 
+        ? call.argument.slice(0, 60) + "..." 
+        : call.argument;
+      message += `    Argument: ${argPreview}\n`;
+    }
+    if (call.lineContent) {
+      const linePreview = call.lineContent.length > 80 
+        ? call.lineContent.slice(0, 80) + "..." 
+        : call.lineContent;
+      message += `    Code: ${linePreview}\n`;
+    }
+  }
+  
+  message += "\nRisk Factors: " + analysis.riskFactors.join(", ") + "\n";
+  
+  message += "\nWhy This Is Dangerous:\n";
+  message += `  ${getDangerousCodeExplanation(analysis)}\n`;
+  
+  message += "\nSafer Alternatives:\n";
+  const alternatives = getSaferCodeAlternatives(analysis);
+  for (const alt of alternatives) {
+    message += `  • ${alt}\n`;
+  }
+  
+  message += "\nOverride:\n";
+  message += "  Use the safe_shell_approve tool to allow this code for this session.\n";
+  
+  return message;
+}
+
+/**
+ * Get explanation of why detected code is dangerous
+ */
+function getDangerousCodeExplanation(analysis: CodeAnalysis): string {
+  const categories = analysis.riskFactors;
+  
+  if (categories.includes("fs_destructive")) {
+    return "This code performs destructive file system operations (delete, remove, truncate). " +
+           "If targeting system or user directories, this could result in permanent data loss.";
+  }
+  if (categories.includes("shell_exec")) {
+    return "This code executes shell commands, bypassing shell analysis and security gates. " +
+           "Shell execution can perform any operation with the user's permissions.";
+  }
+  if (categories.includes("network")) {
+    return "This code performs network operations that could exfiltrate sensitive data to external servers. " +
+           "Combined with file read operations, this is a common data exfiltration pattern.";
+  }
+  if (categories.includes("code_exec")) {
+    return "This code dynamically executes code, which is a critical security risk. " +
+           "If the executed code comes from user input, this allows arbitrary code execution.";
+  }
+  if (analysis.obfuscationDetected) {
+    return "This code uses obfuscation techniques (encoding, string manipulation) to hide its intent. " +
+           "Obfuscation is commonly used to bypass security analysis.";
+  }
+  
+  return "This code contains patterns that may be dangerous depending on context and usage.";
+}
+
+/**
+ * Get safer alternative suggestions
+ */
+function getSaferCodeAlternatives(analysis: CodeAnalysis): string[] {
+  const alternatives: string[] = [];
+  const categories = analysis.riskFactors;
+  
+  if (categories.includes("fs_destructive")) {
+    alternatives.push("Use project-relative paths (./build, ./dist) instead of absolute paths");
+    alternatives.push("Add path validation to ensure target is within project directory");
+    alternatives.push("Use dry-run or preview before destructive operations");
+  }
+  if (categories.includes("shell_exec")) {
+    alternatives.push("Use native APIs instead of shell execution (e.g., fs.rm instead of 'rm -rf')");
+    alternatives.push("Avoid shell=true in child_process APIs");
+    alternatives.push("Use spawn with explicit arguments array instead of shell strings");
+  }
+  if (categories.includes("network")) {
+    alternatives.push("Validate URLs against allowlist before making requests");
+    alternatives.push("Avoid sending sensitive data (SSH keys, credentials) over network");
+    alternatives.push("Use encrypted connections (HTTPS) for all network operations");
+  }
+  if (categories.includes("code_exec")) {
+    alternatives.push("Avoid eval/exec with any form of user input");
+    alternatives.push("Use safer alternatives (JSON.parse instead of eval for data)");
+    alternatives.push("If dynamic code is required, use sandboxed environments");
+  }
+  if (analysis.obfuscationDetected) {
+    alternatives.push("Write code explicitly without encoding or string manipulation");
+    alternatives.push("Use clear, readable code that security tools can analyze");
+  }
+  
+  if (alternatives.length === 0) {
+    alternatives.push("Review code intent and ensure it matches expected behavior");
+  }
+  
+  return alternatives;
 }
 
 // ============================================================
@@ -669,6 +794,47 @@ export default function (pi: ExtensionAPI) {
       tool = "ctx_batch_execute";
       command = extracted.join(" ; ");
       commands = extracted;
+    } else if (event.toolName === "write" || event.toolName === "edit") {
+      // CODE-BASED BYPASS PREVENTION: Analyze code content for dangerous APIs
+      const code = event.toolName === "write" 
+        ? (input?.content as string) || ""
+        : (input?.edits as Array<{ newString?: string }>)?.map(e => e.newString || "").join("\n") || "";
+      
+      if (!code) return undefined;
+      
+      const filePath = (input?.path as string) || "";
+      const analysis = analyzeCode(code, filePath);
+      
+      // Block critical-level code in all modes except YOLO
+      if (analysis.level === "critical" && mode !== "yolo") {
+        return {
+          block: true,
+          reason: formatCodeBlockMessage(analysis, filePath),
+        };
+      }
+      
+      // Require confirmation for danger-level in ask mode
+      if (analysis.level === "danger" && mode === "ask") {
+        const ok = await ctx.ui.confirm(
+          "⚠️ Dangerous Code Detected",
+          formatCodeBlockMessage(analysis, filePath),
+          { confirmText: "Allow", cancelText: "Block" }
+        );
+        if (!ok) {
+          return { block: true, reason: "Blocked by user" };
+        }
+      }
+      
+      // Warn for caution-level or if dangerous calls detected
+      if (analysis.dangerousCalls.length > 0) {
+        const severity = analysis.level === "caution" ? "warn" : "info";
+        ctx.ui.notify(
+          `⚡ Code analysis: ${analysis.dangerousCalls.length} dangerous API call(s) detected (${analysis.level}: ${analysis.score}/100)`,
+          severity
+        );
+      }
+      
+      return undefined; // Allow code to be written
     } else {
       return undefined;
     }
