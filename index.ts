@@ -54,11 +54,21 @@ interface GlobalConfig {
   testCommand: string;
   testCommandArgs: string[];
   testTimeout: number;
+  // Configurable risk thresholds
+  criticalThreshold: number;  // Scores >= this are auto-blocked
+  dangerThreshold: number;    // Scores >= this require confirmation (ask mode)
+  cautionThreshold: number;   // Scores >= this show warning
+  // Learning mode
+  learningMode: boolean;      // Auto-whitelist frequently allowed commands
+  learningMinUses: number;    // Times a command must be allowed before auto-whitelist
+  // Project-aware paths (safe by default)
+  safeProjectPaths: string[]; // Paths that are auto-allowed
 }
 
 interface SessionState {
   mode?: Mode;
   tempApprovals: string[];
+  learningCounts?: Record<string, number>; // command -> how many times allowed
 }
 
 // ============================================================
@@ -134,6 +144,19 @@ const DEFAULT_CONFIG: GlobalConfig = {
   testCommand: "uv",
   testCommandArgs: ["run", "pytest", "-q"],
   testTimeout: 120_000,
+  // Risk thresholds (defaults match existing hardcoded values)
+  criticalThreshold: 81,
+  dangerThreshold: 51,
+  cautionThreshold: 21,
+  // Learning mode (off by default)
+  learningMode: false,
+  learningMinUses: 3,
+  // Commonly safe project paths
+  safeProjectPaths: [
+    './build', './dist', './out', './target',
+    './node_modules', './.git', './tmp',
+    './package.json', './tsconfig.json',
+  ],
 };
 
 const execP = promisify(execFile);
@@ -180,6 +203,12 @@ function mergeConfigs(
     testCommand: project.testCommand ?? global.testCommand,
     testCommandArgs: project.testCommandArgs ?? global.testCommandArgs,
     testTimeout: project.testTimeout ?? global.testTimeout,
+    criticalThreshold: project.criticalThreshold ?? global.criticalThreshold,
+    dangerThreshold: project.dangerThreshold ?? global.dangerThreshold,
+    cautionThreshold: project.cautionThreshold ?? global.cautionThreshold,
+    learningMode: project.learningMode ?? global.learningMode,
+    learningMinUses: project.learningMinUses ?? global.learningMinUses,
+    safeProjectPaths: project.safeProjectPaths ?? global.safeProjectPaths,
   };
 }
 
@@ -375,6 +404,43 @@ function getShellSaferAlternatives(riskResult: ReturnType<typeof scoreCommand>):
   }
   
   return alternatives;
+}
+
+/**
+ * Map a numeric score to a risk level using configurable thresholds
+ */
+function scoreToLevel(score: number, config: GlobalConfig): 'safe' | 'caution' | 'danger' | 'critical' {
+  if (score >= config.criticalThreshold) return 'critical';
+  if (score >= config.dangerThreshold) return 'danger';
+  if (score >= config.cautionThreshold) return 'caution';
+  return 'safe';
+}
+
+/**
+ * Check if a path matches one of the safe project paths
+ */
+function isSafeProjectPath(path: string, safePaths: string[]): boolean {
+  for (const safePath of safePaths) {
+    // Normalize: strip leading ./ for comparison
+    const normalizedPath = path.startsWith('./') ? path.slice(2) : path;
+    const normalizedSafe = safePath.startsWith('./') ? safePath.slice(2) : safePath;
+    if (normalizedPath === normalizedSafe || normalizedPath.startsWith(normalizedSafe + '/')) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Get effective score threshold for a given level
+ */
+function getThresholdForLevel(level: 'safe' | 'caution' | 'danger' | 'critical', config: GlobalConfig): number {
+  switch (level) {
+    case 'critical': return config.criticalThreshold;
+    case 'danger': return config.dangerThreshold;
+    case 'caution': return config.cautionThreshold;
+    case 'safe': return 0;
+  }
 }
 
 // ============================================================
@@ -636,22 +702,23 @@ async function checkShellCommand(
       console.log(`  Reasons: ${riskResult.reasons.join(', ')}`);
       console.log(`  Risk factors: ${riskResult.riskFactors.join(', ')}`);
       
-      // Phase 3: Block critical risks, require confirmation for danger
-      if (riskResult.level === 'critical') {
+      // Use configurable thresholds from merged config
+      const effectiveLevel = scoreToLevel(riskResult.score, mergedConfig);
+      
+      // Block critical risks (score >= criticalThreshold)
+      if (effectiveLevel === 'critical') {
         return {
           block: true,
           reason: formatShellBlockMessage(astAnalysis, riskResult, command),
         };
       }
       
-      if (riskResult.level === 'danger' && mode !== 'yolo') {
-        // In 'ask' mode, require confirmation for danger-level commands
-        if (mode === 'ask') {
-          return {
-            block: true,
-            reason: formatShellBlockMessage(astAnalysis, riskResult, command),
-          };
-        }
+      // In 'ask' mode, require confirmation for danger-level commands
+      if (effectiveLevel === 'danger' && mode === 'ask') {
+        return {
+          block: true,
+          reason: formatShellBlockMessage(astAnalysis, riskResult, command),
+        };
       }
       //   };
       // }
@@ -731,6 +798,7 @@ async function checkShellCommand(
       if (choice === "Allow Always") {
         tempApprovals.push(command);
         persistState();
+        trackLearningCommand(command, mergedConfig, tempApprovals, ctx.cwd);
       }
 
       if (choice === "Allow for Project") {
@@ -739,6 +807,7 @@ async function checkShellCommand(
         if (persistAllowToProject(ctx.cwd, command) && reloadProjectConfig) {
           reloadProjectConfig(ctx.cwd);
         }
+        trackLearningCommand(command, mergedConfig, tempApprovals, ctx.cwd);
       }
 
       return undefined; // Allow
@@ -787,6 +856,46 @@ function persistAllowToProject(cwd: string, command: string): boolean {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(projectConfigPath, JSON.stringify(projectCfg, null, 2), "utf-8");
   return true;
+}
+
+/**
+ * Track command in learning mode and auto-whitelist when threshold is reached
+ */
+function trackLearningCommand(
+  command: string,
+  config: GlobalConfig,
+  tempApprovals: string[],
+  cwd: string,
+): void {
+  if (!config.learningMode) return;
+  
+  // Get or create learning counts from session state
+  const pi = _pi;
+  if (!pi) return;
+  
+  const state = pi.getSessionState(SESSION_STATE_TYPE) as SessionState | undefined;
+  const counts = (state?.learningCounts ?? {}) as Record<string, number>;
+  
+  // Increment count
+  const current = (counts[command] ?? 0) + 1;
+  counts[command] = current;
+  
+  // Persist updated counts
+  const updatedState: SessionState = {
+    mode: _sessionMode,
+    tempApprovals: [...tempApprovals],
+    learningCounts: counts,
+  };
+  pi.appendEntry(SESSION_STATE_TYPE, updatedState);
+  
+  // Auto-whitelist when threshold is reached
+  if (current >= config.learningMinUses) {
+    const alreadyAllowed = tempApprovals.includes(command);
+    if (!alreadyAllowed) {
+      tempApprovals.push(command);
+      console.log(`[pi-safe-shell] Learning mode: auto-whitelisted "${command}" after ${current} uses`);
+    }
+  }
 }
 
 // ============================================================
@@ -990,8 +1099,11 @@ export default function (pi: ExtensionAPI) {
       const merged = mergeConfigs(globalConfig, projectConfig);
       const mode = effectiveMode();
       
+      // Use configurable thresholds from merged config
+      const effectiveLevel = scoreToLevel(analysis.score, merged);
+      
       // Block critical-level code in all modes except YOLO
-      if (analysis.level === "critical" && mode !== "yolo") {
+      if (effectiveLevel === "critical" && mode !== "yolo") {
         return {
           block: true,
           reason: formatCodeBlockMessage(analysis, filePath),
@@ -999,7 +1111,7 @@ export default function (pi: ExtensionAPI) {
       }
       
       // Require confirmation for danger-level in ask mode
-      if (analysis.level === "danger" && mode === "ask") {
+      if (effectiveLevel === "danger" && mode === "ask") {
         const ok = await ctx.ui.confirm(
           "⚠️ Dangerous Code Detected",
           formatCodeBlockMessage(analysis, filePath),
@@ -1012,9 +1124,9 @@ export default function (pi: ExtensionAPI) {
       
       // Warn for caution-level or if dangerous calls detected
       if (analysis.dangerousCalls.length > 0) {
-        const severity = analysis.level === "caution" ? "warn" : "info";
+        const severity = effectiveLevel === "caution" ? "warn" : "info";
         ctx.ui.notify(
-          `⚡ Code analysis: ${analysis.dangerousCalls.length} dangerous API call(s) detected (${analysis.level}: ${analysis.score}/100)`,
+          `⚡ Code analysis: ${analysis.dangerousCalls.length} dangerous API call(s) detected (${effectiveLevel.toUpperCase()}: ${analysis.score}/100)`,
           severity
         );
       }
@@ -1252,6 +1364,7 @@ export default function (pi: ExtensionAPI) {
         if (choice === "Allow Always") {
           tempApprovals.push(params.command.trim());
           persistState();
+          trackLearningCommand(params.command.trim(), mergeConfigs(globalConfig, projectConfig), tempApprovals, ctx.cwd);
         }
         if (choice === "Allow for Project") {
           tempApprovals.push(params.command.trim());
@@ -1259,6 +1372,7 @@ export default function (pi: ExtensionAPI) {
           if (persistAllowToProject(ctx.cwd, params.command.trim())) {
             reloadProjectConfig(ctx.cwd);
           }
+          trackLearningCommand(params.command.trim(), mergeConfigs(globalConfig, projectConfig), tempApprovals, ctx.cwd);
         }
         return {
           content: [{ type: "text" as const, text: `Approved: ${params.command}` }],
@@ -1319,20 +1433,23 @@ export default function (pi: ExtensionAPI) {
         // Show status
         const lines: string[] = [
           "",
-          "╔══════════════════════════════════════════╗",
-          `║  pi-safe-shell                            ║`,
+          "╔═══════════════════════════════════════════╗",
+          `║  pi-safe-shell                             ║`,
           `║  Mode:      ${MODE_LABELS[mode].padEnd(32)}║`,
-          `║  Approvals: ${tempApprovals.length} session command(s)           ║`,
-          `║  Whitelist: ${merged.whitelist.length} pattern(s)                ║`,
-          `║  Denylist:  ${merged.denylist.length} pattern(s)                 ║`,
-          "╚══════════════════════════════════════════╝",
+          `║  Approvals: ${tempApprovals.length.toString().padEnd(3)} session command(s)               ║`,
+          `║  Whitelist: ${merged.whitelist.length.toString().padEnd(3)} pattern(s)                    ║`,
+          `║  Denylist:  ${merged.denylist.length.toString().padEnd(3)} pattern(s)                     ║`,
+          `║  Threshold: ${merged.cautionThreshold}-${merged.dangerThreshold}-${merged.criticalThreshold} (cau-dan-cri)        ║`,
+          `║  Learning:  ${(merged.learningMode ? "ON" : "OFF").padEnd(31)}║`,
+          "╚═══════════════════════════════════════════╝",
           "",
           "Commands:",
           "  /safe-shell                       Show this status",
           "  /safe-shell mode block|ask|whitelist|yolo   Switch operating mode",
-          "  /safe-shell allow <command> [--project]   Approve a command (--project persists to project)",
-          "  /safe-shell deny <command> [--project]    Remove approval (--project removes from project)",
-          "",
+          "  /safe-shell allow <command> [--project]   Approve a command",
+          "  /safe-shell deny <command> [--project]    Remove approval",
+          "  /safe-shell threshold <type> <val>         Set risk threshold",
+          "  /safe-shell learning on|off|status         Toggle learning mode",
         ];
 
         if (tempApprovals.length > 0) {
@@ -1483,9 +1600,79 @@ export default function (pi: ExtensionAPI) {
           return;
         }
 
+        case "threshold": {
+          const thresholdParts = value.split(/\s+/);
+          if (thresholdParts.length < 2) {
+            ctx.ui.notify(
+              "Usage: /safe-shell threshold <type> <value>\n" +
+              "  Types: critical, danger, caution\n" +
+              "  Example: /safe-shell threshold danger 60",
+              "error",
+            );
+            return;
+          }
+          const thresholdType = thresholdParts[0].toLowerCase();
+          const thresholdValue = parseInt(thresholdParts[1], 10);
+          
+          if (isNaN(thresholdValue) || thresholdValue < 0 || thresholdValue > 100) {
+            ctx.ui.notify("Threshold value must be a number between 0 and 100.", "error");
+            return;
+          }
+          
+          const merged = mergeConfigs(globalConfig, projectConfig);
+          const newConfig = { ...merged };
+          if (thresholdType === "critical") newConfig.criticalThreshold = thresholdValue;
+          else if (thresholdType === "danger") newConfig.dangerThreshold = thresholdValue;
+          else if (thresholdType === "caution") newConfig.cautionThreshold = thresholdValue;
+          else {
+            ctx.ui.notify("Unknown threshold type. Use critical, danger, or caution.", "error");
+            return;
+          }
+          
+          if (newConfig.cautionThreshold >= newConfig.dangerThreshold ||
+              newConfig.dangerThreshold >= newConfig.criticalThreshold) {
+            ctx.ui.notify(
+              "Thresholds must satisfy: caution < danger < critical.\n" +
+              "  Current: caution=" + newConfig.cautionThreshold + ", danger=" + newConfig.dangerThreshold + ", critical=" + newConfig.criticalThreshold,
+              "error",
+            );
+            return;
+          }
+          
+          const target = thresholdType === "critical" ? "criticalThreshold" :
+                         thresholdType === "danger" ? "dangerThreshold" : "cautionThreshold";
+          (globalConfig as any)[target] = thresholdValue;
+          ctx.ui.notify(
+            "Threshold updated: " + thresholdType + "=" + thresholdValue + "\n" +
+            "  Current: caution=" + globalConfig.cautionThreshold + ", danger=" + globalConfig.dangerThreshold + ", critical=" + globalConfig.criticalThreshold + "\n" +
+            "  To persist, add to your config file.",
+            "info",
+          );
+          return;
+        }
+
+        case "learning": {
+          const learningValue = value.trim().toLowerCase();
+          if (learningValue === "on" || learningValue === "enable" || learningValue === "true") {
+            globalConfig.learningMode = true;
+            ctx.ui.notify("Learning mode enabled: frequently-allowed commands will be auto-whitelisted.", "info");
+          } else if (learningValue === "off" || learningValue === "disable" || learningValue === "false") {
+            globalConfig.learningMode = false;
+            ctx.ui.notify("Learning mode disabled.", "info");
+          } else if (learningValue === "status" || learningValue === "") {
+            ctx.ui.notify(
+              "Learning mode: " + (globalConfig.learningMode ? "ON" : "OFF") + " (min " + globalConfig.learningMinUses + " uses before auto-whitelist)",
+              "info",
+            );
+          } else {
+            ctx.ui.notify("Usage: /safe-shell learning on|off|status", "error");
+          }
+          return;
+        }
+
         default:
           ctx.ui.notify(
-            `Unknown subcommand: ${subcommand}. Use mode, allow, or deny.`,
+            `Unknown subcommand: ${subcommand}. Use mode, allow, deny, threshold, or learning.`,
             "error",
           );
       }
