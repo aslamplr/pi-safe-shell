@@ -27,6 +27,13 @@ Thumbs.db
 
 # Project config (user-specific, not committed)
 .pi/pi-safe-shell.json
+.pi/*
+
+# Session files
+pi-session-*.html
+
+# Project memory (cross-session context, not source code)
+memory/
 
 # Temporary files
 tmp/
