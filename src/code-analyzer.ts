@@ -377,7 +377,7 @@ export function analyzeCode(code: string, filePath?: string): CodeAnalysis {
       });
       
       // Score based on severity with path multiplier
-      const baseScore = severity === 'critical' ? 80 : 
+      const baseScore = severity === 'critical' ? 85: 
                        severity === 'high' ? 50 : 
                        severity === 'medium' ? 25 : 10;
       score += Math.round(baseScore * pathScoreMultiplier);
