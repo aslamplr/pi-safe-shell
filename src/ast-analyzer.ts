@@ -88,7 +88,9 @@ const COMMAND_INTENTS: Record<string, Intent> = {
   'whoami': Intent.Info,
   'hostname': Intent.Info,
   'uname': Intent.Info,
+  'which': Intent.Info,
   'echo': Intent.Info,
+  'printf': Intent.Info,
   
   // Read commands
   'cat': Intent.Read,
@@ -120,6 +122,9 @@ const COMMAND_INTENTS: Record<string, Intent> = {
   'ssh': Intent.Network,
   'scp': Intent.Network,
   'rsync': Intent.Network,
+  'nc': Intent.Network,
+  'ncat': Intent.Network,
+  'telnet': Intent.Network,
   
   // Privilege commands
   'sudo': Intent.Privilege,
@@ -180,7 +185,7 @@ export function analyzeCommand(command: string): CommandAnalysis {
       return;
     }
     
-    // Extract inline code from string nodes (after -c/-e flags)
+    // Extract inline code from string nodes (after -c/-e flags, or after eval/exec)
     if (node.type === 'string_content') {
       // Check if parent string node's previous sibling was -c or -e flag
       const parentString = node.parent;
@@ -188,6 +193,26 @@ export function analyzeCommand(command: string): CommandAnalysis {
         const prevSibling = parentString.previousSibling;
         if (prevSibling && (prevSibling.text === '-c' || prevSibling.text === '-e' || prevSibling.text === '-exec')) {
           result.inlineCode = node.text;
+        }
+      }
+      
+      // Also check: if we're inside an eval command, capture the string as inline code
+      // We check the command text rather than executable (may not be set yet during walk)
+      if (!result.inlineCode) {
+        const parent = node.parent;
+        if (parent && parent.type === 'string') {
+          // Walk up to find if this is inside an eval command
+          let current: TreeSitter.Node | null = parent;
+          while (current) {
+            if (current.type === 'command') {
+              const firstChild = current.firstChild;
+              if (firstChild && firstChild.type === 'command_name' && firstChild.text === 'eval') {
+                result.inlineCode = node.text;
+              }
+              break;
+            }
+            current = current.parent;
+          }
         }
       }
     }
@@ -277,6 +302,14 @@ export function analyzeCommand(command: string): CommandAnalysis {
       }
     }
     
+    // Detect eval with inline code argument
+    if (node.type === 'command_name' && node.text === 'eval') {
+      // Mark for eval analysis in scoring
+      if (!result.flags.includes('is_eval')) {
+        result.flags.push('is_eval');
+      }
+    }
+    
     // Detect redirects (file_redirect, heredoc_redirect, etc.)
     if (node.type.includes('redirect')) {
       result.hasRedirect = true;
@@ -320,7 +353,7 @@ const INTENT_WEIGHTS: Record<Intent, number> = {
   [Intent.Search]: 5,
   [Intent.Read]: 10,
   [Intent.Write]: 20,
-  [Intent.GitMutation]: 25,
+  [Intent.GitMutation]: 15,
   [Intent.Execute]: 30,
   [Intent.Network]: 35,
   [Intent.Delete]: 40,
@@ -475,13 +508,22 @@ export function scoreCommand(analysis: CommandAnalysis): RiskResult {
     const baseScore = DANGEROUS_FLAGS[flag] ?? 0;
     
     // Adjust -r/-R score based on command
+  // Adjust -r/-R score based on command
     let flagScore = baseScore;
     if ((flag === '-r' || flag === '-R') && baseScore > 0) {
-      // Recursive is more dangerous with rm, less with grep/cp
       if (analysis.executable === 'rm') {
         flagScore = baseScore + 10; // rm -r is very dangerous
-      } else if (['grep', 'find', 'ls', 'cp', 'mv', 'chown', 'chmod'].includes(analysis.executable || '')) {
-        flagScore = Math.floor(baseScore * 0.5); // Less dangerous for these
+      } else if (['grep', 'find', 'ls', 'cp', 'mv', 'chown', 'chmod', 'rsync'].includes(analysis.executable || '')) {
+        flagScore = 0; // grep -r is recursive search, not destructive
+      } else if (['php', 'ruby', 'perl'].includes(analysis.executable || '')) {
+        flagScore = 0; // php -r is run code, not recursive
+      }
+    }
+    
+    // Context-aware -f flag: force for rm/chmod, but follow/format for tail/watch/truncate
+    if (flag === '-f' && baseScore > 0) {
+      if (['tail', 'watch', 'truncate', 'less', 'more', 'journalctl'].includes(analysis.executable || '')) {
+        flagScore = 0; // -f means follow/watch, not force
       }
     }
     
@@ -810,6 +852,48 @@ export function scoreCommand(analysis: CommandAnalysis): RiskResult {
     }
     if (/\b(curl|wget)\b/.test(analysis.command)) {
       score += 30; reasons.push('eval with network'); riskFactors.push('eval_with_network');
+    }
+    
+    // Extract the inline code from eval arguments and analyze it
+    const evalArgs = analysis.args.filter(a => !a.startsWith('__cmdsub__:') && !a.startsWith('__heredoc__:'));
+    for (const arg of evalArgs) {
+      // Remove quotes if present
+      const cleanArg = arg.replace(/^['"]+|['"]+$/g, '');
+      if (cleanArg && cleanArg.length > 0) {
+        const inlineAnalysis = analyzeInlineCode(cleanArg);
+        score += inlineAnalysis.score;
+        reasons.push(...inlineAnalysis.reasons);
+        riskFactors.push(...inlineAnalysis.riskFactors);
+      }
+    }
+    
+    // Also extract inline code from cmdsub content for eval
+    const cmdSubs = analysis.args.filter(a => a.startsWith('__cmdsub__:'));
+    for (const sub of cmdSubs) {
+      const innerCommand = sub.slice('__cmdsub__:'.length);
+      if (innerCommand && innerCommand.length > 0) {
+        const inlineAnalysis = analyzeInlineCode(innerCommand);
+        score += inlineAnalysis.score;
+        reasons.push(...inlineAnalysis.reasons);
+        riskFactors.push(...inlineAnalysis.riskFactors);
+      }
+    }
+  }
+  
+  // 13. Detect nc (netcat) for data exfiltration
+  if (analysis.executable === 'nc' || analysis.executable === 'ncat') {
+    // Check for pipe to nc (data exfiltration pattern)
+    if (analysis.hasPipe) {
+      score += 30; reasons.push('data exfil via netcat'); riskFactors.push('data_exfiltration');
+    }
+    score += 15; reasons.push('network connection via netcat'); riskFactors.push('network_connection');
+  }
+  
+  // 14. Detect data exfiltration via pipe to python/php (RCE pipelines)
+  if (analysis.hasPipe && /\b(python|python3|php|ruby|perl)\b/i.test(analysis.command)) {
+    const hasNetwork = /\b(curl|wget)\b/.test(analysis.command);
+    if (hasNetwork) {
+      score += 20; reasons.push('network to interpreter pipeline'); riskFactors.push('remote_code_execution');
     }
   }
   
