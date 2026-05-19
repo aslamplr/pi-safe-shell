@@ -750,6 +750,11 @@ async function checkShellCommand(
     case "block": {
       // If UI is available, offer interactive options including switch to ask mode
       if (ctx.hasUI) {
+        _pi?.events.emit("pi-ios-notify:notify", {
+          title: "🔒 Approval needed",
+          body: "block mode: " + toolName + " - " + truncate(command, 100),
+          source: "safe-shell",
+        });
         const choice = await ctx.ui.select(
           `🔒 pi-safe-shell: command blocked.\n\n  Tool: ${toolName}\n  Command: ${truncate(command, 300)}\n\n  Block mode denies all shell commands. Choose an option:`,
           ["Allow Once", "Switch to Ask Mode and Allow", "Deny"],
@@ -825,6 +830,11 @@ async function checkShellCommand(
         };
       }
 
+      _pi?.events.emit("pi-ios-notify:notify", {
+        title: "🔒 Approval needed",
+        body: "ask mode: " + toolName + " - " + truncate(command, 100),
+        source: "safe-shell",
+      });
       const choice = await ctx.ui.select(
         `🐚 pi-safe-shell: allow this command?\n\n  Tool: ${toolName}\n  ${truncate(command, 300)}`,
         ["Allow Once", "Allow Always", "Allow for Project", "Deny"],
@@ -1291,6 +1301,11 @@ export default function (pi: ExtensionAPI) {
             message += "  " + call.api + " (" + call.severity + ")\n";
           }
         }
+        pi.events.emit("pi-ios-notify:notify", {
+          title: "⚠️ Dangerous code detected",
+          body: (filePath || "inline code") + " — " + analysis.level.toUpperCase() + " (" + analysis.score + "/100)",
+          source: "safe-shell",
+        });
         const ok = await ctx.ui.confirm(
           "⚠️ Dangerous Code Detected",
           message,
@@ -1559,6 +1574,11 @@ export default function (pi: ExtensionAPI) {
             isError: true,
           };
         }
+        pi.events.emit("pi-ios-notify:notify", {
+          title: "🔒 Approval needed",
+          body: "safe_shell_approve: " + (params.command || "").substring(0, 100),
+          source: "safe-shell",
+        });
         const choice = await ctx.ui.select(
           `Approve command?\n\n  ${params.command}`,
           ["Allow Once", "Allow Always", "Allow for Project", "Deny"],
@@ -1604,6 +1624,11 @@ export default function (pi: ExtensionAPI) {
             details: { approvals: [...tempApprovals] },
           };
         }
+        pi.events.emit("pi-ios-notify:notify", {
+          title: "🗑️ Removal confirmation",
+          body: "safe_shell_approve deny: " + (params.command || "").substring(0, 100),
+          source: "safe-shell",
+        });
         const ok = await ctx.ui.confirm(
           "Remove approval?",
           `Remove this command from session approvals?\n\n  ${params.command}`,
