@@ -13,7 +13,7 @@ A [Pi](https://github.com/earendil-works/pi-coding-agent) extension that gates s
 
 **Repository:** [github.com/aslamplr/pi-safe-shell](https://github.com/aslamplr/pi-safe-shell)
 
-**Version:** 0.5.0
+**Version:** 0.5.1
 
 ---
 
