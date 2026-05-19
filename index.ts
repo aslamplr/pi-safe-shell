@@ -1078,7 +1078,7 @@ export default function (pi: ExtensionAPI) {
 
   // Resolve current effective mode
   function effectiveMode(): Mode {
-    return sessionMode ?? projectConfig?.defaultMode ?? globalConfig.defaultMode;
+    return _sessionMode ?? sessionMode ?? projectConfig?.defaultMode ?? globalConfig.defaultMode;
   }
 
   // Rebuild session state from persisted entries
