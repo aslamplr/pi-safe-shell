@@ -748,17 +748,39 @@ async function checkShellCommand(
   // --- 3. Mode check ---
   switch (mode) {
     case "block": {
+      // If UI is available, offer interactive options including switch to ask mode
+      if (ctx.hasUI) {
+        const choice = await ctx.ui.select(
+          `🔒 pi-safe-shell: command blocked.\n\n  Tool: ${toolName}\n  Command: ${truncate(command, 300)}\n\n  Block mode denies all shell commands. Choose an option:`,
+          ["Allow Once", "Switch to Ask Mode and Allow", "Deny"],
+        );
+        if (!choice || choice === "Deny") {
+          return { block: true, reason: "command blocked by user." };
+        }
+        if (choice === "Allow Once") {
+          tempApprovals.push(command);
+          persistState();
+          return undefined;
+        }
+        if (choice === "Switch to Ask Mode and Allow") {
+          _sessionMode = "ask";
+          tempApprovals.push(command);
+          persistState();
+          ctx.ui.notify("Switched to ask mode and allowed: " + truncate(command, 100), "info");
+          return undefined;
+        }
+      }
       return {
         block: true,
         reason:
-          `bash is disabled by policy.\n` +
-          `  Tool: ${toolName}\n` +
-          `  Command: ${truncate(command, 200)}\n\n` +
-          `  Use one of the available built-in tools (Read, Write, Edit, Grep, Find)\n` +
-          `  or a registered safe tool (run_tests, git_status, list_files).\n\n` +
-          `  To allow this command WITHOUT using bash:\n` +
-          `    → Use the safe_shell_approve tool with action="allow" and command="${truncate(command, 80)}"\n` +
-          `    → Or run: /safe-shell allow ${truncate(command, 100)}`,
+          "bash is disabled by policy.\n" +
+          "  Tool: " + toolName + "\n" +
+          "  Command: " + truncate(command, 200) + "\n\n" +
+          "  Use one of the available built-in tools (Read, Write, Edit, Grep, Find)\n" +
+          "  or a registered safe tool (run_tests, git_status, list_files).\n\n" +
+          "  To allow this command:\n" +
+          "    --> Use the safe_shell_approve tool with action=\"allow\"\n" +
+          "    --> Or run: /safe-shell allow " + truncate(command, 100),
       };
     }
 
@@ -1249,9 +1271,9 @@ export default function (pi: ExtensionAPI) {
       if (effectiveLevel === "critical" && mode !== "yolo") {
         let message = formatCodeBlockMessage(analysis, filePath);
         if (merged.debugMode && analysis.dangerousCalls.length > 0) {
-          message += `\n\n--- Debug: Matched Patterns ---\n`;
+          message += "\n\n--- Debug: Matched Patterns ---\n";
           for (const call of analysis.dangerousCalls) {
-            message += `  ${call.api} (${call.severity}): ${call.description || 'no description'}\n`;
+            message += "  " + call.api + " (" + call.severity + ")\n";
           }
         }
         return {
@@ -1264,9 +1286,9 @@ export default function (pi: ExtensionAPI) {
       if (effectiveLevel === "danger" && mode === "ask") {
         let message = formatCodeBlockMessage(analysis, filePath);
         if (merged.debugMode && analysis.dangerousCalls.length > 0) {
-          message += `\n\n--- Debug: Matched Patterns ---\n`;
+          message += "\n\n--- Debug: Matched Patterns ---\n";
           for (const call of analysis.dangerousCalls) {
-            message += `  ${call.api} (${call.severity}): ${call.description || 'no description'}\n`;
+            message += "  " + call.api + " (" + call.severity + ")\n";
           }
         }
         const ok = await ctx.ui.confirm(
