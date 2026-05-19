@@ -4,15 +4,16 @@
 
 A [Pi](https://github.com/earendil-works/pi-coding-agent) extension that gates shell commands and code execution with three layers of security analysis, inspired by the [bash-damage-from-within](https://github.com/disler/bash-damage-from-within) project.
 
-> **Default:** 🔒 **Block** mode — no shell commands without explicit approval.
+> **Default:** 🔒 **Block** mode — now with interactive options to Allow Once or Switch to Ask Mode.
 > 
 > **v0.4.0+:** Three security layers: pattern matching → AST analysis → code content analysis.
+> **v0.5.0:** Block mode interactive prompt with Switch to Ask Mode option.
 > 
-> **154 tests, 100% pass rate.**
+> **154 tests, 100% pass rate.****
 
 **Repository:** [github.com/aslamplr/pi-safe-shell](https://github.com/aslamplr/pi-safe-shell)
 
-**Version:** 0.4.2
+**Version:** 0.5.0
 
 ---
 
@@ -89,7 +90,7 @@ Every command and code snippet gets a risk score from 0-100:
 
 | Mode | Behavior | Use Case |
 |------|----------|----------|
-| **🔒 Block** (default) | All shell calls blocked. Agent uses Read/Write/Edit + safe registered tools. | Maximum safety. |
+| **🔒 Block** (default) | All shell calls blocked. When UI is available, offers interactive options: Allow Once, Switch to Ask Mode and Allow, or Deny. | Maximum safety. |
 | **❓ Ask** | Each shell call shows a selection prompt. | Selective override without mode-switching. |
 | **🔓 Whitelist** | Only whitelisted commands pass through. Compound operators rejected. | Standard dev workflow. |
 | **🚀 YOLO** | All commands allowed except denylist. No prompts. | Maximum freedom, minimal safety net. |
@@ -377,6 +378,16 @@ npx tsx test-code-analyzer.ts
 ---
 
 ## Changelog
+
+### v0.5.0 (2026-05-15)
+
+**Block mode interactive prompt** 🎯
+
+- ✅ Block mode now shows an interactive prompt when UI is available:
+  - **Allow Once** — allows the command for this session
+  - **Switch to Ask Mode and Allow** — switches to ask mode and allows
+  - **Deny** — blocks the command
+- ✅ Falls back to static block message in headless sessions
 
 ### v0.4.0 (2026-05-15)
 
