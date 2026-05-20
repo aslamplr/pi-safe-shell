@@ -1,9 +1,10 @@
 {
   "name": "@aslamplr/pi-safe-shell",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Protect your production assets from dangerous bash commands. Default no-bash mode with user approval gates and whitelist support.",
   "license": "MIT",
   "keywords": [
+    "pi-package",
     "pi",
     "pi-extension",
     "bash",
