@@ -8,12 +8,13 @@ A [Pi](https://github.com/earendil-works/pi-coding-agent) extension that gates s
 > 
 > **v0.4.0+:** Three security layers: pattern matching → AST analysis → code content analysis.
 > **v0.5.0:** Block mode interactive prompt with Switch to Ask Mode option.
+> **v0.6.0:** Intent detection + pi-powerbar integration.
 > 
-> **154 tests, 100% pass rate.****
+> **210 tests, 100% pass rate.****
 
 **Repository:** [github.com/aslamplr/pi-safe-shell](https://github.com/aslamplr/pi-safe-shell)
 
-**Version:** 0.5.1
+**Version:** 0.6.0
 
 ---
 
@@ -34,10 +35,10 @@ The extension loads automatically in all Pi sessions.
 
 ---
 
-## Three Security Layers
+## Four Security Layers
 
 ```
-Shell Command  ───►  Pattern Matching  ───►  AST Analysis  ───►  Execute / Block
+Shell Command  ───►  Pattern Matching  ───►  AST Analysis  ───►  Intent Detection  ───►  Execute / Block
                           │                        │
 Code Write     ───►  Code Content Analysis  ───►  Execute / Block
 ```
@@ -60,7 +61,33 @@ Uses **tree-sitter-bash** to parse shell commands into an AST and semantically a
 - **Heredoc analysis** — Analyze `<<EOF` content for dangerous patterns
 - **Obfuscation detection** — Base64 decode piped to shell, wget download-execute patterns
 
-### Layer 3: Code Content Analysis (v0.4.0)
+### Layer 4: Intent Detection (v0.6.0+)
+Uses **template-based learning** to auto-approve repetitive safe commands after a configurable number of approvals:
+
+- **Command safety taxonomy** — Classifies commands as Safe (grep, cat, ls), Contextual (git checkout, npm install), or Dangerous (rm, chmod, sudo)
+- **Path classification** — Categorizes paths as PROJECT_SAFE, USER_SPACE, SYSTEM, or ROOT_DANGEROUS
+- **Template abstraction** — `grep "Overview" README.md` → template `grep [STRING] [PATH]`
+- **Session learning** — Tracks approvals per template, auto-approves when threshold is met
+- **Mode-based thresholds** — Configurable per-mode: sandbox/dev/production/migration
+
+**Path-aware safety:**
+- System paths (`/etc`, `/usr`) — never auto-approved, even with template match
+- User space paths (`~/Documents`) — require one extra approval
+- Dangerous commands (`rm`, `sudo`) — never auto-approved
+
+```
+# First command — requires approval
+grep "API" README.md  # ❓ Ask
+
+# User approves
+
+# Same template — auto-approved
+grep "Overview" docs/setup.md  # ✓ Auto-approved
+```
+
+---
+
+## Risk Scoring
 Analyzes code written via `write`/`edit` tools to prevent agents from bypassing shell analysis by writing dangerous code instead:
 
 - **Node.js patterns** — `fs.rmSync`, `child_process.exec`, `eval`, `require('child_process')`, `https.request`
@@ -211,8 +238,38 @@ Override:
 | `/safe-shell deny <command> [--project]` | Remove approval |
 | `/safe-shell threshold <type> <value>` | Set risk threshold (critical/danger/caution) |
 | `/safe-shell learning on\|off\|status` | Toggle learning mode |
+| `/safe-shell intent on\|off\|status` | Toggle intent detection |
+| `/safe-shell intent-mode <mode>` | Set intent mode (sandbox/dev/prod/migration) |
+| `/safe-shell intent-status` | Show intent session statistics |
 | `/safe-shell debug on\|off\|status` | Toggle debug mode |
 | `/safe-shell audit status\|on\|off` | View or toggle audit log |
+
+---
+
+## pi-powerbar Integration
+
+When [pi-powerbar](https://github.com/juanibiapina/pi-powerbar) is installed, safe-shell shows its mode in the persistent status bar. The segment updates on every mode switch and approval change.
+
+**Segment colors by mode:**
+| Mode | Display | Color |
+|------|---------|-------|
+| 🔒 Block | `🔒 Block` | Red |
+| ❓ Ask | `❓ Ask` | Yellow |
+| 🔓 Whitelist | `🔓 WList` | Dim |
+| 🚀 YOLO | `🚀 YOLO` | Red |
+
+Approval count shows as a suffix when > 0 (e.g. `🔒 Block 3`).
+
+**Load order in `~/.pi/settings.json`:**
+```json
+"packages": [
+  "npm:pi-extension-settings",
+  "npm:@juanibiapina/pi-powerbar",   // ← powerbar first
+  "npm:@aslamplr/pi-safe-shell"      // ← safe-shell after
+]
+```
+
+Configure which segments appear via `/extension-settings` → Powerbar → Left/Right segments.
 
 ---
 
@@ -317,12 +374,13 @@ Hardcoded defaults
 
 ---
 
-## Test Results (v0.4.1)
+## Test Results (v0.6.0)
 
 ```
-AST Analyzer:  119/119 (100%)  — Commands, chains, substitutions, variables, heredocs
-Code Analyzer:  35/35  (100%)  — APIs, obfuscation, paths, call chains
-Total:         154/154 (100%)
+AST Analyzer:     119/119 (100%) — Commands, chains, substitutions, variables, heredocs
+Code Analyzer:     35/35  (100%) — APIs, obfuscation, paths, call chains
+Intent Detector:   56/56  (100%) — Safety, paths, templates, modes, scenarios
+Total:            210/210 (100%)
 ```
 
 ---
@@ -330,10 +388,12 @@ Total:         154/154 (100%)
 ## Architecture
 
 ```
-Shell command → Denylist check → Temp approvals → AST analysis → Mode switch
-                    │                │                │              │
-                    ▼                ▼                ▼              ▼
-                BLOCK ⛔         ALLOW ✅      Score 0-100     block/ask/whitelist/yolo
+Shell command → Denylist check → Temp approvals → AST analysis → Intent detect → Mode switch
+                    │                │                │               │              │
+                    ▼                ▼                ▼               ▼              ▼
+                BLOCK ⛔         ALLOW ✅      Score 0-100    Auto-approve    block/ask/
+                                                                    │        whitelist/yolo
+                                                            Template match?
 
 Code write    → Code content analysis → Block critical → Confirm danger → Allow safe
 ```
@@ -344,12 +404,15 @@ Code write    → Code content analysis → Block critical → Confirm danger �
 
 ```
 pi-safe-shell/
-├── index.ts              # Main extension (1600+ lines)
+├── index.ts              # Main extension (1900+ lines)
 ├── src/
 │   ├── ast-analyzer.ts   # AST-based shell command analysis
-│   └── code-analyzer.ts  # Code content analysis (Node.js/Python)
+│   ├── code-analyzer.ts  # Code content analysis (Node.js/Python)
+│   └── intent-detector.ts # Intent detection engine
 ├── test-ast-analyzer.ts  # 119 AST analysis tests
 ├── test-code-analyzer.ts # 35 code analysis tests
+├── INTENT_DETECTION.md   # Intent detection documentation
+├── INTEGRATION_GUIDE.md  # Developer integration guide
 ├── memory/core/project/  # Cross-session project knowledge
 │   ├── 001-overview.md
 │   ├── 002-v0.4.0-plan.md
@@ -378,6 +441,19 @@ npx tsx test-code-analyzer.ts
 ---
 
 ## Changelog
+
+### v0.6.0 (2026-05-25)
+
+**Intent Detection + pi-powerbar** 🧠
+
+- ✅ **Intent detection engine** — Auto-approves repetitive safe commands based on template matching and session learning
+- ✅ **Command safety taxonomy** — Classifies commands as Safe/Contextual/Dangerous
+- ✅ **Path classification** — PROJECT_SAFE, USER_SPACE, SYSTEM, ROOT_DANGEROUS
+- ✅ **Template abstraction** — `grep [STRING] [PATH]` pattern matching
+- ✅ **Mode-based thresholds** — sandbox/dev/production/migration modes
+- ✅ **pi-powerbar integration** — Safe-shell mode shown in persistent status bar
+- ✅ **New commands** — `/safe-shell intent`, `intent-mode`, `intent-status`
+- ✅ **56 intent detection tests** — 210 total tests, 100% pass rate
 
 ### v0.5.0 (2026-05-15)
 

@@ -622,6 +622,38 @@ function persistState(): void {
   _pi.appendEntry(SESSION_STATE_TYPE, state);
 }
 
+/**
+ * Update the pi-powerbar segment with current safe-shell status.
+ * Fire-and-forget: if pi-powerbar isn't loaded, the event is silently ignored.
+ */
+function updatePowerbarSegment(pi: ExtensionAPI, mode: Mode, approvals: number): void {
+  const colors: Record<Mode, string> = {
+    block: "error",
+    ask: "warning",
+    whitelist: "muted",
+    yolo: "error",
+  };
+  const icons: Record<Mode, string> = {
+    block: "🔒",
+    ask: "❓",
+    whitelist: "🔓",
+    yolo: "🚀",
+  };
+  const labels: Record<Mode, string> = {
+    block: "Block",
+    ask: "Ask",
+    whitelist: "WList",
+    yolo: "YOLO",
+  };
+
+  pi.events.emit("powerbar:update", {
+    id: "safe-shell",
+    text: `${icons[mode]} ${labels[mode]}`,
+    suffix: approvals > 0 ? `${approvals}` : undefined,
+    color: colors[mode],
+  });
+}
+
 function compilePatterns(patterns: string[]): RegExp[] {
   return patterns.map((p) => {
     try {
@@ -792,6 +824,7 @@ async function checkShellCommand(
           tempApprovals.push(command);
           persistState();
           intentDetector?.recordApproval(command);
+          updatePowerbarSegment(pi, effectiveMode(), tempApprovals.length);
           return undefined;
         }
         if (choice === "Switch to Ask Mode and Allow") {
@@ -799,6 +832,7 @@ async function checkShellCommand(
           tempApprovals.push(command);
           persistState();
           intentDetector?.recordApproval(command);
+          updatePowerbarSegment(pi, effectiveMode(), tempApprovals.length);
           ctx.ui.notify("Switched to ask mode and allowed: " + truncate(command, 100), "info");
           return undefined;
         }
@@ -876,6 +910,7 @@ async function checkShellCommand(
         tempApprovals.push(command);
         persistState();
         intentDetector?.recordApproval(command);
+        updatePowerbarSegment(pi, effectiveMode(), tempApprovals.length);
         return undefined;
       }
 
@@ -883,6 +918,7 @@ async function checkShellCommand(
         tempApprovals.push(command);
         persistState();
         intentDetector?.recordApproval(command);
+        updatePowerbarSegment(pi, effectiveMode(), tempApprovals.length);
         trackLearningCommand(command, mergedConfig, tempApprovals, ctx.cwd);
       }
 
@@ -890,6 +926,7 @@ async function checkShellCommand(
         tempApprovals.push(command);
         persistState();
         intentDetector?.recordApproval(command);
+        updatePowerbarSegment(pi, effectiveMode(), tempApprovals.length);
         if (persistAllowToProject(ctx.cwd, command) && reloadProjectConfig) {
           reloadProjectConfig(ctx.cwd);
         }
@@ -1146,6 +1183,7 @@ export default function (pi: ExtensionAPI) {
 
     // Sync to module-level for checkShellCommand
     syncState();
+    updatePowerbarSegment(pi, effectiveMode(), tempApprovals.length);
   }
 
   // ---- Event: session_start ----
@@ -1198,6 +1236,13 @@ export default function (pi: ExtensionAPI) {
         pathOverrides: {},
       });
     }
+
+    // Register powerbar segment (if pi-powerbar is loaded)
+    pi.events.emit("powerbar:register-segment", {
+      id: "safe-shell",
+      label: "Safe Shell Mode",
+    });
+    updatePowerbarSegment(pi, effectiveMode(), tempApprovals.length);
 
     // Rebuild session state
     rebuildState(ctx);
@@ -1659,6 +1704,7 @@ export default function (pi: ExtensionAPI) {
           }
           trackLearningCommand(params.command.trim(), mergeConfigs(globalConfig, projectConfig), tempApprovals, ctx.cwd);
         }
+        updatePowerbarSegment(pi, effectiveMode(), tempApprovals.length);
         return {
           content: [{ type: "text" as const, text: `Approved: ${params.command}` }],
           details: { approvals: [...tempApprovals] },
@@ -1779,6 +1825,7 @@ export default function (pi: ExtensionAPI) {
           sessionMode = target as Mode;
           syncState();
           persistState();
+          updatePowerbarSegment(pi, effectiveMode(), tempApprovals.length);
           if (ctx.hasUI) {
             ctx.ui.notify(
               `pi-safe-shell: switched to "${target}" mode for this session.`,
@@ -1828,6 +1875,7 @@ export default function (pi: ExtensionAPI) {
             // Reload project config
             projectConfig = loadProjectConfig(ctx.cwd);
             intentDetector?.recordApproval(targetCommand);
+            updatePowerbarSegment(pi, effectiveMode(), tempApprovals.length);
             ctx.ui.notify(`Added to project whitelist: ${targetCommand}`, "info");
             return;
           }
@@ -1841,6 +1889,7 @@ export default function (pi: ExtensionAPI) {
           tempApprovals.push(targetCommand);
           persistState();
           intentDetector?.recordApproval(targetCommand);
+          updatePowerbarSegment(pi, effectiveMode(), tempApprovals.length);
           ctx.ui.notify(`Approved: ${targetCommand}`, "info");
           return;
         }
@@ -1897,6 +1946,7 @@ export default function (pi: ExtensionAPI) {
 
           tempApprovals.splice(index, 1);
           persistState();
+          updatePowerbarSegment(pi, effectiveMode(), tempApprovals.length);
           ctx.ui.notify(`Removed approval: ${targetCommand}`, "info");
           return;
         }
