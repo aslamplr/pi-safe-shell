@@ -43,6 +43,7 @@ import { homedir } from "node:os";
 import { promisify } from "node:util";
 import { initParser, analyzeCommand, scoreCommand, isParserInitialized } from "./src/ast-analyzer";
 import { analyzeCode, formatCodeAnalysis, CodeAnalysis } from "./src/code-analyzer";
+import { createIntentDetector, type IntentDetector } from "./src/intent-detector";
 
 // ============================================================
 // Types
@@ -65,6 +66,9 @@ interface GlobalConfig {
   // Learning mode
   learningMode: boolean;      // Auto-whitelist frequently allowed commands
   learningMinUses: number;    // Times a command must be allowed before auto-whitelist
+  // Intent detection
+  intentDetectionEnabled: boolean;  // Enable intent-based auto-approve
+  intentDetectionMode: 'sandbox' | 'development' | 'production' | 'migration';
   // Project-aware paths (safe by default)
   safeProjectPaths: string[]; // Paths that are auto-allowed
   // Observability
@@ -158,6 +162,9 @@ const DEFAULT_CONFIG: GlobalConfig = {
   // Learning mode (off by default)
   learningMode: false,
   learningMinUses: 3,
+  // Intent detection (enabled by default)
+  intentDetectionEnabled: true,
+  intentDetectionMode: 'production',  // Most conservative default
   // Commonly safe project paths
   safeProjectPaths: [
     './build', './dist', './out', './target',
@@ -690,6 +697,7 @@ async function checkShellCommand(
   toolName: string,
   ctx: ExtensionContext,
   tempApprovals: string[],
+  intentDetector: IntentDetector | null,  // Intent detector instance
   reloadProjectConfig?: (cwd: string) => void,
 ): Promise<{ block: boolean; reason?: string } | undefined> {
   const mergedConfig = merged;
@@ -702,7 +710,25 @@ async function checkShellCommand(
     };
   }
 
-  // --- 2. Session temp approvals check (always applies) ---
+  // --- 2. Intent detection check (auto-approve safe repetitive commands) ---
+  if (intentDetector && mergedConfig.intentDetectionEnabled) {
+    const intentResult = intentDetector.analyze(command);
+    
+    if (intentResult.shouldAutoApprove) {
+      // Auto-approve based on intent analysis
+      console.log(`[pi-safe-shell intent] Auto-approved: ${command}`);
+      console.log(`  Reason: ${intentResult.reason}`);
+      return undefined;  // Allow
+    }
+    
+    // Log when intent detection requires approval (debug mode)
+    if (mergedConfig.debugMode) {
+      console.log(`[pi-safe-shell intent] Requires approval: ${command}`);
+      console.log(`  Reason: ${intentResult.reason}`);
+    }
+  }
+
+  // --- 3. Session temp approvals check (always applies) ---
   if (tempApprovals.includes(command)) {
     return undefined; // Allow
   }
@@ -765,12 +791,14 @@ async function checkShellCommand(
         if (choice === "Allow Once") {
           tempApprovals.push(command);
           persistState();
+          intentDetector?.recordApproval(command);
           return undefined;
         }
         if (choice === "Switch to Ask Mode and Allow") {
           _sessionMode = "ask";
           tempApprovals.push(command);
           persistState();
+          intentDetector?.recordApproval(command);
           ctx.ui.notify("Switched to ask mode and allowed: " + truncate(command, 100), "info");
           return undefined;
         }
@@ -844,15 +872,24 @@ async function checkShellCommand(
         return { block: true, reason: "command blocked by user." };
       }
 
+      if (choice === "Allow Once") {
+        tempApprovals.push(command);
+        persistState();
+        intentDetector?.recordApproval(command);
+        return undefined;
+      }
+
       if (choice === "Allow Always") {
         tempApprovals.push(command);
         persistState();
+        intentDetector?.recordApproval(command);
         trackLearningCommand(command, mergedConfig, tempApprovals, ctx.cwd);
       }
 
       if (choice === "Allow for Project") {
         tempApprovals.push(command);
         persistState();
+        intentDetector?.recordApproval(command);
         if (persistAllowToProject(ctx.cwd, command) && reloadProjectConfig) {
           reloadProjectConfig(ctx.cwd);
         }
@@ -1066,6 +1103,7 @@ export default function (pi: ExtensionAPI) {
   // ---- State (in-memory, reconstructed on session events) ----
   let sessionMode: Mode | undefined;
   let tempApprovals: string[] = [];
+  let intentDetector: IntentDetector | null = null;
 
   // Sync state to module-level variables for checkShellCommand
   function syncState() {
@@ -1152,6 +1190,15 @@ export default function (pi: ExtensionAPI) {
       );
     }
 
+    // Initialize intent detector
+    if (globalConfig.intentDetectionEnabled) {
+      intentDetector = createIntentDetector({
+        projectRoot: ctx.cwd,
+        mode: globalConfig.intentDetectionMode,
+        pathOverrides: {},
+      });
+    }
+
     // Rebuild session state
     rebuildState(ctx);
   });
@@ -1161,16 +1208,19 @@ export default function (pi: ExtensionAPI) {
     const mode = effectiveMode();
     const modeLabel = MODE_LABELS[mode];
     const approvals = tempApprovals.length;
+    const intentInfo = globalConfig.intentDetectionEnabled && intentDetector
+      ? `\n  Intent Detection: ${globalConfig.intentDetectionMode} mode (auto-approves safe repetitive commands)`
+      : '';
 
     const modeHint =
       `You are operating in ${modeLabel} bash security mode. ` +
       (mode === "block"
         ? "All bash commands are blocked. Use the available built-in tools (Read, Write, Edit, Grep, Find) or registered safe tools (run_tests, git_status, list_files)."
         : mode === "ask"
-          ? `Each bash command requires user confirmation. You may ask the user to approve individual commands or switch modes via /safe-shell.`
+          ? `Each bash command requires user confirmation. You may ask the user to approve individual commands or switch modes via /safe-shell.${intentInfo}`
           : mode === "whitelist"
-            ? `Only whitelisted bash patterns are allowed. Session has ${approvals} command approval(s). You may ask the user to approve additional commands via /safe-shell.`
-            : `⚠️ YOLO MODE: All commands allowed except denylist items. Use with extreme caution. Session has ${approvals} command approval(s).`);
+            ? `Only whitelisted bash patterns are allowed. Session has ${approvals} command approval(s). You may ask the user to approve additional commands via /safe-shell.${intentInfo}`
+            : `⚠️ YOLO MODE: All commands allowed except denylist items. Use with extreme caution. Session has ${approvals} command approval(s).${intentInfo}`);
 
     return {
       systemPrompt: _event.systemPrompt + `\n\n## Safe Shell\n\n${modeHint}`,
@@ -1339,7 +1389,7 @@ export default function (pi: ExtensionAPI) {
 
     // Check each command through the full gate
     for (const cmd of cmdsToCheck) {
-      const result = await checkShellCommand(cmd, merged, mode, tool, ctx, tempApprovals, (cwd) => {
+      const result = await checkShellCommand(cmd, merged, mode, tool, ctx, tempApprovals, intentDetector, (cwd) => {
         const fresh = loadProjectConfig(cwd);
         if (fresh) projectConfig = fresh;
       });
@@ -1589,14 +1639,21 @@ export default function (pi: ExtensionAPI) {
             details: {},
           };
         }
+        if (choice === "Allow Once") {
+          tempApprovals.push(params.command.trim());
+          persistState();
+          intentDetector?.recordApproval(params.command.trim());
+        }
         if (choice === "Allow Always") {
           tempApprovals.push(params.command.trim());
           persistState();
+          intentDetector?.recordApproval(params.command.trim());
           trackLearningCommand(params.command.trim(), mergeConfigs(globalConfig, projectConfig), tempApprovals, ctx.cwd);
         }
         if (choice === "Allow for Project") {
           tempApprovals.push(params.command.trim());
           persistState();
+          intentDetector?.recordApproval(params.command.trim());
           if (persistAllowToProject(ctx.cwd, params.command.trim())) {
             reloadProjectConfig(ctx.cwd);
           }
@@ -1674,6 +1731,7 @@ export default function (pi: ExtensionAPI) {
           `║  Denylist:  ${merged.denylist.length.toString().padEnd(3)} pattern(s)                     ║`,
           `║  Threshold: ${merged.cautionThreshold}-${merged.dangerThreshold}-${merged.criticalThreshold} (cau-dan-cri)        ║`,
           `║  Learning:  ${(merged.learningMode ? "ON" : "OFF").padEnd(31)}║`,
+          `║  Intent:    ${(globalConfig.intentDetectionEnabled ? `${globalConfig.intentDetectionMode} ON` : "OFF").padEnd(31)}║`,
           `║  Debug:     ${(merged.debugMode ? "ON" : "OFF").padEnd(31)}║`,
           `║  Audit:     ${(merged.auditLogEnabled ? "ON" : "OFF").padEnd(31)}║`,
           "╚═══════════════════════════════════════════╝",
@@ -1687,6 +1745,9 @@ export default function (pi: ExtensionAPI) {
           "  /safe-shell learning on|off|status         Toggle learning mode",
           "  /safe-shell debug on|off|status            Toggle debug mode",
           "  /safe-shell audit status|on|off            Audit log summary",
+          "  /safe-shell intent on|off|status           Toggle intent detection",
+          "  /safe-shell intent-mode <mode>             Set intent mode (sandbox/dev/prod/migration)",
+          "  /safe-shell intent-status                Show intent stats",
         ];
 
         if (tempApprovals.length > 0) {
@@ -1716,6 +1777,7 @@ export default function (pi: ExtensionAPI) {
           }
 
           sessionMode = target as Mode;
+          syncState();
           persistState();
           if (ctx.hasUI) {
             ctx.ui.notify(
@@ -1765,6 +1827,7 @@ export default function (pi: ExtensionAPI) {
             writeFileSync(projectConfigPath, JSON.stringify(projectCfg, null, 2), "utf-8");
             // Reload project config
             projectConfig = loadProjectConfig(ctx.cwd);
+            intentDetector?.recordApproval(targetCommand);
             ctx.ui.notify(`Added to project whitelist: ${targetCommand}`, "info");
             return;
           }
@@ -1777,6 +1840,7 @@ export default function (pi: ExtensionAPI) {
 
           tempApprovals.push(targetCommand);
           persistState();
+          intentDetector?.recordApproval(targetCommand);
           ctx.ui.notify(`Approved: ${targetCommand}`, "info");
           return;
         }
@@ -1946,9 +2010,54 @@ export default function (pi: ExtensionAPI) {
           return;
         }
 
+        case "intent-mode": {
+          const targetMode = value.toLowerCase();
+          if (!['sandbox', 'development', 'production', 'migration'].includes(targetMode)) {
+            ctx.ui.notify(
+              `Invalid mode "${targetMode}". Use: sandbox, development, production, or migration.`,
+              "error",
+            );
+            return;
+          }
+          globalConfig.intentDetectionMode = targetMode as any;
+          ctx.ui.notify(`Intent detection mode set to "${targetMode}"`, "info");
+          return;
+        }
+
+        case "intent-status": {
+          const stats = intentDetector?.getStats();
+          const lines = [
+            `Intent Detection: ${globalConfig.intentDetectionEnabled ? 'ON' : 'OFF'}`,
+            `Mode: ${globalConfig.intentDetectionMode}`,
+            stats ? `\nSession Stats:\n  Templates: ${stats.totalTemplates}\n  Approvals: ${stats.totalApprovals}` : '',
+            stats?.topTemplates.length ? `\nTop Templates:\n${stats.topTemplates.map(t => `  • ${t.template} (${t.count}x)`).join('\n')}` : '',
+          ].filter(Boolean).join('\n');
+          ctx.ui.notify(lines, "info");
+          return;
+        }
+
+        case "intent": {
+          const intentValue = value.trim().toLowerCase();
+          if (intentValue === "on" || intentValue === "enable") {
+            globalConfig.intentDetectionEnabled = true;
+            ctx.ui.notify("Intent detection enabled.", "info");
+          } else if (intentValue === "off" || intentValue === "disable") {
+            globalConfig.intentDetectionEnabled = false;
+            ctx.ui.notify("Intent detection disabled.", "info");
+          } else if (intentValue === "status" || intentValue === "") {
+            ctx.ui.notify(
+              `Intent Detection: ${globalConfig.intentDetectionEnabled ? 'ON' : 'OFF'} (mode: ${globalConfig.intentDetectionMode})`,
+              "info",
+            );
+          } else {
+            ctx.ui.notify("Usage: /safe-shell intent on|off|status", "error");
+          }
+          return;
+        }
+
         default:
           ctx.ui.notify(
-            `Unknown subcommand: ${subcommand}. Use mode, allow, deny, threshold, learning, debug, or audit.`,
+            `Unknown subcommand: ${subcommand}. Use mode, allow, deny, threshold, learning, debug, audit, intent, intent-mode, or intent-status.`,
             "error",
           );
       }
