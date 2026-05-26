@@ -9,6 +9,7 @@ A [Pi](https://github.com/earendil-works/pi-coding-agent) extension that gates s
 > **v0.4.0+:** Three security layers: pattern matching → AST analysis → code content analysis.
 > **v0.5.0:** Block mode interactive prompt with Switch to Ask Mode option.
 > **v0.6.0:** Intent detection + pi-powerbar integration.
+> **v0.6.1:** Learning mode removed, intent detection persisted across reloads.
 > 
 > **210 tests, 100% pass rate.****
 
@@ -428,6 +429,15 @@ npx tsx test-code-analyzer.ts
 ---
 
 ## Changelog
+
+### v0.6.1 (2026-05-25)
+
+**Learning mode removed, intent detection persisted** 🧹
+
+- ✅ **Learning mode removed** — Intent detection fully replaces it with safer, template-based auto-approval
+- ✅ **Persistent intent tracking** — Template approval map survives extension reloads via session state
+- ✅ **Auto-approve adds to tempApprovals** — Commands also pushed to tempApprovals for cross-reload compatibility
+- ✅ **Cleanup** — Removed `learningMode`, `learningMinUses`, `trackLearningCommand()`, `/safe-shell learning` command
 
 ### v0.6.0 (2026-05-25)
 
