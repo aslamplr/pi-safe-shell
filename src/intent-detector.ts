@@ -626,6 +626,47 @@ export class IntentDetector {
   clear(): void {
     this.sessionApprovals.clear();
   }
+  /**
+   * Get the set of template keys that have reached auto-approve threshold
+   */
+  getApprovedTemplates(): Set<string> {
+    const approved = new Set<string>();
+    for (const [templateKey, record] of this.sessionApprovals.entries()) {
+      if (record.count > 0) {
+        approved.add(templateKey);
+      }
+    }
+    return approved;
+  }
+
+  /**
+   * Serialize approval state to a JSON-compatible object for session persistence
+   */
+  getSerializedState(): Record<string, { count: number; lastApproved: number; pathClassifications: Record<string, number> }> {
+    const state: Record<string, { count: number; lastApproved: number; pathClassifications: Record<string, number> }> = {};
+    for (const [templateKey, record] of this.sessionApprovals.entries()) {
+      state[templateKey] = {
+        count: record.count,
+        lastApproved: record.lastApproved,
+        pathClassifications: record.pathClassifications as unknown as Record<string, number>,
+      };
+    }
+    return state;
+  }
+
+  /**
+   * Restore approval state from serialized session data
+   */
+  restoreState(state: Record<string, { count: number; lastApproved: number; pathClassifications: Record<string, number> }>): void {
+    for (const [templateKey, data] of Object.entries(state)) {
+      this.sessionApprovals.set(templateKey, {
+        count: data.count,
+        lastApproved: data.lastApproved,
+        pathClassifications: data.pathClassifications as unknown as Record<PathSafety, number>,
+      });
+    }
+  }
+
 }
 
 // ============================================================

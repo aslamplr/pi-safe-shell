@@ -27,7 +27,6 @@
  *   /safe-shell allow <command> [--project]  — Add approval (--project persists to .pi/pi-safe-shell.json)
  *   /safe-shell deny <command> [--project]   — Remove approval (--project removes from project whitelist)
  *   /safe-shell threshold <type> <value>     — Set risk thresholds (critical/danger/caution)
- *   /safe-shell learning on|off|status       — Toggle learning mode
  *   /safe-shell debug on|off|status          — Toggle debug mode
  *   /safe-shell audit status|on|off          — Audit log commands to .pi/safe-shell-audit.jsonl
  */
@@ -63,9 +62,6 @@ interface GlobalConfig {
   criticalThreshold: number;  // Scores >= this are auto-blocked
   dangerThreshold: number;    // Scores >= this require confirmation (ask mode)
   cautionThreshold: number;   // Scores >= this show warning
-  // Learning mode
-  learningMode: boolean;      // Auto-whitelist frequently allowed commands
-  learningMinUses: number;    // Times a command must be allowed before auto-whitelist
   // Intent detection
   intentDetectionEnabled: boolean;  // Enable intent-based auto-approve
   intentDetectionMode: 'sandbox' | 'development' | 'production' | 'migration';
@@ -79,7 +75,7 @@ interface GlobalConfig {
 interface SessionState {
   mode?: Mode;
   tempApprovals: string[];
-  learningCounts?: Record<string, number>; // command -> how many times allowed
+  intentApprovals?: Record<string, { count: number; lastApproved: number; pathClassifications: Record<string, number> }>;
 }
 
 // ============================================================
@@ -159,9 +155,6 @@ const DEFAULT_CONFIG: GlobalConfig = {
   criticalThreshold: 81,
   dangerThreshold: 51,
   cautionThreshold: 21,
-  // Learning mode (off by default)
-  learningMode: false,
-  learningMinUses: 3,
   // Intent detection (enabled by default)
   intentDetectionEnabled: true,
   intentDetectionMode: 'production',  // Most conservative default
@@ -223,8 +216,6 @@ function mergeConfigs(
     criticalThreshold: project.criticalThreshold ?? global.criticalThreshold,
     dangerThreshold: project.dangerThreshold ?? global.dangerThreshold,
     cautionThreshold: project.cautionThreshold ?? global.cautionThreshold,
-    learningMode: project.learningMode ?? global.learningMode,
-    learningMinUses: project.learningMinUses ?? global.learningMinUses,
     safeProjectPaths: project.safeProjectPaths ?? global.safeProjectPaths,
     auditLogEnabled: project.auditLogEnabled ?? global.auditLogEnabled,
     debugMode: project.debugMode ?? global.debugMode,
@@ -606,11 +597,17 @@ const MODE_LABELS: Record<Mode, string> = {
 let _pi: ExtensionAPI | null = null;
 let _sessionMode: Mode | undefined;
 let _tempApprovals: string[] = [];
+let _intentApprovals: Record<string, { count: number; lastApproved: number; pathClassifications: Record<string, number> }> = {};
+
 
 function setSessionState(pi: ExtensionAPI, mode: Mode | undefined, tempApprovals: string[]) {
   _pi = pi;
   _sessionMode = mode;
   _tempApprovals = tempApprovals;
+}
+
+function setIntentApprovals(data: Record<string, { count: number; lastApproved: number; pathClassifications: Record<string, number> }>): void {
+  _intentApprovals = data;
 }
 
 function persistState(): void {
@@ -619,6 +616,9 @@ function persistState(): void {
     mode: _sessionMode,
     tempApprovals: [..._tempApprovals],
   };
+  if (Object.keys(_intentApprovals).length > 0) {
+    state.intentApprovals = _intentApprovals;
+  }
   _pi.appendEntry(SESSION_STATE_TYPE, state);
 }
 
@@ -750,6 +750,10 @@ async function checkShellCommand(
       // Auto-approve based on intent analysis
       console.log(`[pi-safe-shell intent] Auto-approved: ${command}`);
       console.log(`  Reason: ${intentResult.reason}`);
+      // Also add to tempApprovals for persistence across reloads
+      if (!tempApprovals.includes(command)) {
+        tempApprovals.push(command);
+      }
       return undefined;  // Allow
     }
     
@@ -919,7 +923,6 @@ async function checkShellCommand(
         persistState();
         intentDetector?.recordApproval(command);
         updatePowerbarSegment(pi, effectiveMode(), tempApprovals.length);
-        trackLearningCommand(command, mergedConfig, tempApprovals, ctx.cwd);
       }
 
       if (choice === "Allow for Project") {
@@ -930,7 +933,6 @@ async function checkShellCommand(
         if (persistAllowToProject(ctx.cwd, command) && reloadProjectConfig) {
           reloadProjectConfig(ctx.cwd);
         }
-        trackLearningCommand(command, mergedConfig, tempApprovals, ctx.cwd);
       }
 
       return undefined; // Allow
@@ -982,44 +984,8 @@ function persistAllowToProject(cwd: string, command: string): boolean {
 }
 
 /**
- * Track command in learning mode and auto-whitelist when threshold is reached
+ * (removed - intent detection replaced learning mode)
  */
-function trackLearningCommand(
-  command: string,
-  config: GlobalConfig,
-  tempApprovals: string[],
-  cwd: string,
-): void {
-  if (!config.learningMode) return;
-  
-  // Get or create learning counts from session state
-  const pi = _pi;
-  if (!pi) return;
-  
-  const state = pi.getSessionState(SESSION_STATE_TYPE) as SessionState | undefined;
-  const counts = (state?.learningCounts ?? {}) as Record<string, number>;
-  
-  // Increment count
-  const current = (counts[command] ?? 0) + 1;
-  counts[command] = current;
-  
-  // Persist updated counts
-  const updatedState: SessionState = {
-    mode: _sessionMode,
-    tempApprovals: [...tempApprovals],
-    learningCounts: counts,
-  };
-  pi.appendEntry(SESSION_STATE_TYPE, updatedState);
-  
-  // Auto-whitelist when threshold is reached
-  if (current >= config.learningMinUses) {
-    const alreadyAllowed = tempApprovals.includes(command);
-    if (!alreadyAllowed) {
-      tempApprovals.push(command);
-      console.log(`[pi-safe-shell] Learning mode: auto-whitelisted "${command}" after ${current} uses`);
-    }
-  }
-}
 
 // ============================================================
 // Observability
@@ -1145,6 +1111,7 @@ export default function (pi: ExtensionAPI) {
   // Sync state to module-level variables for checkShellCommand
   function syncState() {
     setSessionState(pi, sessionMode, tempApprovals);
+    setIntentApprovals(intentDetector?.getSerializedState() ?? {});
   }
 
   // ---- Config (loaded once on startup, cached) ----
@@ -1178,6 +1145,9 @@ export default function (pi: ExtensionAPI) {
       }
       if (Array.isArray(found.tempApprovals)) {
         tempApprovals = [...found.tempApprovals];
+      }
+      if (found.intentApprovals && intentDetector) {
+        intentDetector.restoreState(found.intentApprovals);
       }
     }
 
@@ -1693,7 +1663,6 @@ export default function (pi: ExtensionAPI) {
           tempApprovals.push(params.command.trim());
           persistState();
           intentDetector?.recordApproval(params.command.trim());
-          trackLearningCommand(params.command.trim(), mergeConfigs(globalConfig, projectConfig), tempApprovals, ctx.cwd);
         }
         if (choice === "Allow for Project") {
           tempApprovals.push(params.command.trim());
@@ -1702,7 +1671,6 @@ export default function (pi: ExtensionAPI) {
           if (persistAllowToProject(ctx.cwd, params.command.trim())) {
             reloadProjectConfig(ctx.cwd);
           }
-          trackLearningCommand(params.command.trim(), mergeConfigs(globalConfig, projectConfig), tempApprovals, ctx.cwd);
         }
         updatePowerbarSegment(pi, effectiveMode(), tempApprovals.length);
         return {
@@ -1776,7 +1744,6 @@ export default function (pi: ExtensionAPI) {
           `║  Whitelist: ${merged.whitelist.length.toString().padEnd(3)} pattern(s)                    ║`,
           `║  Denylist:  ${merged.denylist.length.toString().padEnd(3)} pattern(s)                     ║`,
           `║  Threshold: ${merged.cautionThreshold}-${merged.dangerThreshold}-${merged.criticalThreshold} (cau-dan-cri)        ║`,
-          `║  Learning:  ${(merged.learningMode ? "ON" : "OFF").padEnd(31)}║`,
           `║  Intent:    ${(globalConfig.intentDetectionEnabled ? `${globalConfig.intentDetectionMode} ON` : "OFF").padEnd(31)}║`,
           `║  Debug:     ${(merged.debugMode ? "ON" : "OFF").padEnd(31)}║`,
           `║  Audit:     ${(merged.auditLogEnabled ? "ON" : "OFF").padEnd(31)}║`,
@@ -1788,7 +1755,6 @@ export default function (pi: ExtensionAPI) {
           "  /safe-shell allow <command> [--project]   Approve a command",
           "  /safe-shell deny <command> [--project]    Remove approval",
           "  /safe-shell threshold <type> <val>         Set risk threshold",
-          "  /safe-shell learning on|off|status         Toggle learning mode",
           "  /safe-shell debug on|off|status            Toggle debug mode",
           "  /safe-shell audit status|on|off            Audit log summary",
           "  /safe-shell intent on|off|status           Toggle intent detection",
@@ -2002,25 +1968,6 @@ export default function (pi: ExtensionAPI) {
           return;
         }
 
-        case "learning": {
-          const learningValue = value.trim().toLowerCase();
-          if (learningValue === "on" || learningValue === "enable" || learningValue === "true") {
-            globalConfig.learningMode = true;
-            ctx.ui.notify("Learning mode enabled: frequently-allowed commands will be auto-whitelisted.", "info");
-          } else if (learningValue === "off" || learningValue === "disable" || learningValue === "false") {
-            globalConfig.learningMode = false;
-            ctx.ui.notify("Learning mode disabled.", "info");
-          } else if (learningValue === "status" || learningValue === "") {
-            ctx.ui.notify(
-              "Learning mode: " + (globalConfig.learningMode ? "ON" : "OFF") + " (min " + globalConfig.learningMinUses + " uses before auto-whitelist)",
-              "info",
-            );
-          } else {
-            ctx.ui.notify("Usage: /safe-shell learning on|off|status", "error");
-          }
-          return;
-        }
-
         case "debug": {
           const debugValue = value.trim().toLowerCase();
           if (debugValue === "on" || debugValue === "enable" || debugValue === "true") {
@@ -2107,7 +2054,7 @@ export default function (pi: ExtensionAPI) {
 
         default:
           ctx.ui.notify(
-            `Unknown subcommand: ${subcommand}. Use mode, allow, deny, threshold, learning, debug, audit, intent, intent-mode, or intent-status.`,
+            `Unknown subcommand: ${subcommand}. Use mode, allow, deny, threshold, debug, audit, intent, intent-mode, or intent-status.`,
             "error",
           );
       }

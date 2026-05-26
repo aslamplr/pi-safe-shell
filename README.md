@@ -157,16 +157,6 @@ Tune sensitivity per project or session:
 
 Thresholds are validated to maintain `caution < danger < critical`.
 
-### Learning Mode
-Frequently-allowed commands are auto-whitelisted:
-
-```
-/safe-shell learning on            # Enable
-/safe-shell learning status        # Check status
-```
-
-After a command is allowed N times (default: 3), it's automatically added to session approvals.
-
 ### Audit Log
 Every command and code analysis is logged to `.pi/safe-shell-audit.jsonl`:
 
@@ -237,7 +227,6 @@ Override:
 | `/safe-shell allow <command> [--project]` | Approve a command |
 | `/safe-shell deny <command> [--project]` | Remove approval |
 | `/safe-shell threshold <type> <value>` | Set risk threshold (critical/danger/caution) |
-| `/safe-shell learning on\|off\|status` | Toggle learning mode |
 | `/safe-shell intent on\|off\|status` | Toggle intent detection |
 | `/safe-shell intent-mode <mode>` | Set intent mode (sandbox/dev/prod/migration) |
 | `/safe-shell intent-status` | Show intent session statistics |
@@ -347,8 +336,6 @@ Commands approved via `/safe-shell allow` or ask-mode dialog. Survive `/resume`.
   "criticalThreshold": 81,
   "dangerThreshold": 51,
   "cautionThreshold": 21,
-  "learningMode": false,
-  "learningMinUses": 3,
   "auditLogEnabled": true,
   "debugMode": false,
   "safeProjectPaths": ["./build", "./dist", "./out", "./target"],
