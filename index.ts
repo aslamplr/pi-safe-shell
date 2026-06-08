@@ -828,7 +828,7 @@ async function checkShellCommand(
           tempApprovals.push(command);
           persistState();
           intentDetector?.recordApproval(command);
-          updatePowerbarSegment(_pi, effectiveMode(), tempApprovals.length);
+          updatePowerbarSegment(_pi, _sessionMode ?? mode, tempApprovals.length);
           return undefined;
         }
         if (choice === "Switch to Ask Mode and Allow") {
@@ -836,7 +836,7 @@ async function checkShellCommand(
           tempApprovals.push(command);
           persistState();
           intentDetector?.recordApproval(command);
-          updatePowerbarSegment(_pi, effectiveMode(), tempApprovals.length);
+          updatePowerbarSegment(_pi, _sessionMode ?? mode, tempApprovals.length);
           ctx.ui.notify("Switched to ask mode and allowed: " + truncate(command, 100), "info");
           return undefined;
         }
@@ -914,7 +914,7 @@ async function checkShellCommand(
         tempApprovals.push(command);
         persistState();
         intentDetector?.recordApproval(command);
-        updatePowerbarSegment(_pi, effectiveMode(), tempApprovals.length);
+        updatePowerbarSegment(_pi, _sessionMode ?? mode, tempApprovals.length);
         return undefined;
       }
 
@@ -922,14 +922,14 @@ async function checkShellCommand(
         tempApprovals.push(command);
         persistState();
         intentDetector?.recordApproval(command);
-        updatePowerbarSegment(_pi, effectiveMode(), tempApprovals.length);
+        updatePowerbarSegment(_pi, _sessionMode ?? mode, tempApprovals.length);
       }
 
       if (choice === "Allow for Project") {
         tempApprovals.push(command);
         persistState();
         intentDetector?.recordApproval(command);
-        updatePowerbarSegment(_pi, effectiveMode(), tempApprovals.length);
+        updatePowerbarSegment(_pi, _sessionMode ?? mode, tempApprovals.length);
         if (persistAllowToProject(ctx.cwd, command) && reloadProjectConfig) {
           reloadProjectConfig(ctx.cwd);
         }
