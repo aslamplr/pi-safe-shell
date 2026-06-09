@@ -551,7 +551,7 @@ export function scoreCommand(analysis: CommandAnalysis): RiskResult {
     const hasHomeVar = path.includes('$HOME') || path.includes('~');
     
     // System root paths
-    if (SYSTEM_PATHS.some(sysPath => expandedPath.startsWith(sysPath + '/') || expandedPath === sysPath)) {
+    if (path !== '/dev/null' && SYSTEM_PATHS.some(sysPath => expandedPath.startsWith(sysPath + '/') || expandedPath === sysPath)) {
       score += 30;
       reasons.push('targeting system root');
       riskFactors.push('system_path');
@@ -615,7 +615,7 @@ export function scoreCommand(analysis: CommandAnalysis): RiskResult {
   if (analysis.hasRedirect) {
     // Check for redirect to system paths
     const hasSystemRedirect = analysis.paths.some(path =>
-      SYSTEM_PATHS.some(sysPath => path.startsWith(sysPath))
+      path !== "/dev/null" && SYSTEM_PATHS.some(sysPath => path.startsWith(sysPath))
     );
     if (hasSystemRedirect) {
       score += 25;
