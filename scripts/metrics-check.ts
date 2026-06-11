@@ -15,10 +15,14 @@
  *   - FN = 0
  *   - Accuracy ≥ 97%
  *
- * Strict mode (for releases):
+ * Strict mode (for future releases — NOT yet enforced in CI):
  *   - FP ≤ 3
  *   - FN = 0
  *   - Accuracy ≥ 98%
+ *
+ * Note: The default thresholds are the active CI gate. Strict mode is a
+ * future target; run locally with `npm run metrics:check -- --strict`
+ * to track progress toward it.
  */
 
 import {

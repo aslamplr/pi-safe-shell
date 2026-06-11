@@ -29,7 +29,7 @@ function analyzeInlineCodeLocal(code: string): { score: number; reasons: string[
     result.riskFactors.push('destructive_inline_code');
   }
   
-  if (/\b(system|exec|execSync|spawn|spawnSync)\s*\(/.test(code)) {
+  if (/\b(system|exec|execSync|spawn|spawnSync|subprocess)\s*[.(:]/i.test(code)) {
     result.score += 40;
     result.reasons.push('inline code calls system/exec');
     result.riskFactors.push('system_call');
@@ -132,15 +132,20 @@ function classifyBase(command: string): ClassifiedSafety {
   
   const tokens = stripped.split(/\s+/).filter(t => t.length > 0);
   if (tokens.length === 0) return 'safe';
-  
-  let baseCommand = tokens[0].toLowerCase();
-  
+
+  // Skip leading env-var assignments (VAR=value)
+  const cmdStart = tokens.findIndex(t => !/^[A-Z_][A-Z0-9_]*=/.test(t));
+  const effectiveTokens = cmdStart >= 0 ? tokens.slice(cmdStart) : tokens;
+  if (effectiveTokens.length === 0) return 'safe';
+
+  let baseCommand = effectiveTokens[0].toLowerCase();
+
   // Strip path prefix (e.g., /usr/bin/rm -> rm)
   baseCommand = baseCommand.replace(/^.*\//, '');
-  
+
   // Normalize git commands: "git status" -> "git-status"
-  if (baseCommand === 'git' && tokens.length > 1) {
-    const gitSubcommand = tokens[1].toLowerCase();
+  if (baseCommand === 'git' && effectiveTokens.length > 1) {
+    const gitSubcommand = effectiveTokens[1].toLowerCase();
     const normalizedGit = `git-${gitSubcommand}`;
     // Safe git operations (recoverable, no remote)
     const SAFE_GIT = new Set([
@@ -164,8 +169,8 @@ function classifyBase(command: string): ClassifiedSafety {
 
   // Normalize npm/pnpm/yarn: "npm test", "npm run build" -> "npm-test" (safe)
   // "npm install" -> "npm-install" (contextual)
-  if (['npm', 'pnpm', 'yarn'].includes(baseCommand) && tokens.length > 1) {
-    const sub = tokens[1].toLowerCase();
+  if (['npm', 'pnpm', 'yarn'].includes(baseCommand) && effectiveTokens.length > 1) {
+    const sub = effectiveTokens[1].toLowerCase();
     const normalizedPkg = `${baseCommand}-${sub}`;
     // Safe subcommands (read-only, run scripts)
     const SAFE_PKG = new Set([
@@ -179,9 +184,10 @@ function classifyBase(command: string): ClassifiedSafety {
     }
     // Everything else (install, add, remove, publish) stays contextual
   }
-  
-  // Special case: rm -i is interactive (safe)
-  if (baseCommand === 'rm' && tokens.includes('-i')) {
+
+  // Special case: rm -i is interactive (safe) — but only if no force/recursive flags
+  if (baseCommand === 'rm' && effectiveTokens.includes('-i') &&
+      !effectiveTokens.some(t => /^(-[rfR]+|--recursive|--force)$/.test(t))) {
     return 'safe';
   }
   
@@ -239,6 +245,13 @@ const ALWAYS_DANGEROUS_PATTERNS: { pattern: RegExp; reason: string; risk: string
     reason: 'netcat with -e (reverse shell)',
     risk: 'reverse_shell',
     bonus: 50,
+  },
+  // Download-then-execute (wget -O file && bash file, curl -o file && bash file)
+  {
+    pattern: /\b(wget|curl)\b.*(-O\b|-output-document\b|-o\b).*(&&|\|\|).*\b(bash|sh|zsh|node|python)\b/i,
+    reason: 'download then execute',
+    risk: 'remote_code_execution',
+    bonus: 30,
   },
   // Data exfiltration with secret keywords
   {
@@ -440,18 +453,21 @@ export function scoreCommandV2(analysis: CommandAnalysis): RiskResult {
     /\btar\b.*\|.*\b(curl|wget|nc)\b/i,
     /\bbase64\b.*-d.*\|.*\b(bash|sh)\b/i,
     /\bnc\b.*-e/,
+    /\b(wget|curl)\b.*(-O\b|-output-document\b|-o\b).*(&&|\|\|).*\b(bash|sh|zsh|node|python)\b/i,
   ];
   for (const pat of forceCritical) {
     if (pat.test(analysis.command)) {
       score = Math.max(score, 85);
-      if (!reasons.includes('network to interpreter pipeline') && 
+      if (!reasons.includes('network to interpreter pipeline') &&
           !reasons.includes('archive piped to network tool') &&
           !reasons.includes('base64 decode piped to shell') &&
-          !reasons.includes('netcat with -e (reverse shell)')) {
+          !reasons.includes('netcat with -e (reverse shell)') &&
+          !reasons.includes('download then execute')) {
         // Re-classify the reason
         if (pat.source.includes('base64')) reasons.push('base64 decode piped to shell');
         else if (pat.source.includes('nc')) reasons.push('netcat with -e (reverse shell)');
         else if (pat.source.includes('tar')) reasons.push('archive piped to network tool');
+        else if (pat.source.includes('wget') || pat.source.includes('curl')) reasons.push('download then execute');
         else reasons.push('network to interpreter pipeline');
         riskFactors.push('remote_code_execution');
       }
@@ -475,9 +491,9 @@ export function scoreCommandV2(analysis: CommandAnalysis): RiskResult {
   if (analysis.flags.includes('-c') || analysis.flags.includes('-e')) {
     if (analysis.executable && ['bash', 'sh', 'zsh', 'python', 'python3', 'ruby', 'perl', 'node'].includes(analysis.executable)) {
       const inlineIsDestructive = analysis.inlineCode &&
-        /\b(rm|chmod|chown|dd|mkfs|sudo|curl|wget|eval|os\.system)\b/.test(analysis.inlineCode);
+        /\b(rm|chmod|chown|dd|mkfs|sudo|curl|wget|eval|os\.system|subprocess|child_process)\b/.test(analysis.inlineCode);
       if (inlineIsDestructive) {
-        score = Math.max(score, 70);
+        score = Math.max(score, 85);
         reasons.push('inline code with destructive operation');
         riskFactors.push('inline_destructive');
       }
@@ -552,5 +568,5 @@ function finalize(score: number, reasons: string[], riskFactors: string[]): Risk
   // Clamp score to 0-100
   score = Math.min(100, Math.max(0, score));
   const level = score <= 20 ? 'safe' : score <= 50 ? 'caution' : score <= 80 ? 'danger' : 'critical';
-  return { score, level: level as RiskResult['level'], reasons, riskFactors };
+  return { score, level: level as RiskResult['level'], reasons, riskFactors: [...new Set(riskFactors)] };
 }

@@ -47,6 +47,7 @@ function getArg(name: string, def?: string): string | undefined {
 const label = getArg('label', 'current');
 const jsonOnly = args.includes('--json');
 const outFile = getArg('out');
+const outJsonFile = getArg('out-json');
 const impl = (getArg('impl', 'v1') || 'v1').toLowerCase();
 
 // ============================================================
@@ -310,25 +311,26 @@ async function main() {
   const results = await runCorpus();
   const metrics = aggregate(results);
 
+  const buildJsonReport = () => JSON.stringify({
+    label,
+    timestamp: new Date().toISOString(),
+    corpus: getCorpusStats(),
+    metrics,
+    results: results.map(r => ({
+      command: r.entry.command,
+      expected: r.entry.expected,
+      actual: r.level,
+      score: r.score,
+      result: r.result,
+      category: r.entry.category,
+      note: r.entry.note,
+      reasons: r.reasons,
+      riskFactors: r.riskFactors,
+    })),
+  }, null, 2);
+
   if (jsonOnly) {
-    const jsonReport = {
-      label,
-      timestamp: new Date().toISOString(),
-      corpus: getCorpusStats(),
-      metrics,
-      results: results.map(r => ({
-        command: r.entry.command,
-        expected: r.entry.expected,
-        actual: r.level,
-        score: r.score,
-        result: r.result,
-        category: r.entry.category,
-        note: r.entry.note,
-        reasons: r.reasons,
-        riskFactors: r.riskFactors,
-      })),
-    };
-    console.log(JSON.stringify(jsonReport, null, 2));
+    console.log(buildJsonReport());
   } else {
     const md = generateMarkdownReport(metrics, label);
     if (outFile) {
@@ -339,6 +341,13 @@ async function main() {
     } else {
       console.log(md);
     }
+  }
+
+  if (outJsonFile) {
+    const fullPath = path.resolve(outJsonFile);
+    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+    fs.writeFileSync(fullPath, buildJsonReport());
+    console.error(`JSON written to ${fullPath}`);
   }
 
   // Exit with non-zero if there are dangerous false negatives

