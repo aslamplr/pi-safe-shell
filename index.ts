@@ -40,7 +40,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { promisify } from "node:util";
-import { initParser, analyzeCommand, scoreCommand, isParserInitialized } from "./src/ast-analyzer";
+import { initParser, analyzeCommand, isParserInitialized } from "./src/ast-analyzer";
+import { scoreCommandV2 as scoreCommand } from "./src/ast-analyzer-v2";
 import { analyzeCode, formatCodeAnalysis, CodeAnalysis } from "./src/code-analyzer";
 import { createIntentDetector, type IntentDetector } from "./src/intent-detector";
 

@@ -15,4 +15,10 @@ jobs:
         with:
           node-version: '24'
       - run: npm ci
+      # Run metrics check first (via pretest hook) — fails fast on accuracy regressions
+      - run: npm run metrics:check
       - run: npm test
+      # Strict metrics check for releases (only on main)
+      - if: github.ref == 'refs/heads/main'
+        run: npm run metrics:check -- --strict
+        continue-on-error: true  # Don't fail CI on strict — surface as warning

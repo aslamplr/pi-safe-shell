@@ -1,6 +1,6 @@
 {
   "name": "@aslamplr/pi-safe-shell",
-  "version": "0.6.4",
+  "version": "0.7.0",
   "description": "Protect your production assets from dangerous bash commands. Default no-bash mode with user approval gates and whitelist support.",
   "license": "MIT",
   "keywords": [
@@ -25,7 +25,9 @@
     "metrics:proposed": "tsx scripts/metrics.ts --label=proposed --impl=v2 --out=docs/metrics/proposed.md",
     "metrics:v1": "tsx scripts/metrics.ts --label=v1 --impl=v1",
     "metrics:v2": "tsx scripts/metrics.ts --label=v2 --impl=v2",
-    "metrics:json": "tsx scripts/metrics.ts --json"
+    "metrics:json": "tsx scripts/metrics.ts --json",
+    "metrics:check": "tsx scripts/metrics-check.ts",
+    "pretest": "npm run metrics:check"
   },
   "author": "aslamplr",
   "type": "commonjs",

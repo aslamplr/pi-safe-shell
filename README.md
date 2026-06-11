@@ -362,14 +362,19 @@ Hardcoded defaults
 
 ---
 
-## Test Results (v0.6.0)
+## Test Results (v0.7.0)
 
 ```
-AST Analyzer:     119/119 (100%) — Commands, chains, substitutions, variables, heredocs
-Code Analyzer:     35/35  (100%) — APIs, obfuscation, paths, call chains
-Intent Detector:   56/56  (100%) — Safety, paths, templates, modes, scenarios
-Total:            210/210 (100%)
+AST Analyzer (v2):     210/210 metrics corpus (97.6% accuracy, 0 FN, 5 FP)
+AST Analyzer (v1):     210/210 metrics corpus (66.2% accuracy, 12 FN, 59 FP)
+AST Analyzer tests:    119/119 (100%)
+Code Analyzer:          35/35  (100%) — APIs, obfuscation, paths, call chains
+Intent Detector:        56/56  (100%) — Safety, paths, templates, modes, scenarios
+Unit tests:            140/140 (100%) — vitest
 ```
+
+The v2 metrics are enforced as a CI check via `npm run metrics:check`
+(fails if FP > 5 or FN > 0).
 
 ---
 
@@ -429,6 +434,62 @@ npx tsx test-code-analyzer.ts
 ---
 
 ## Changelog
+
+### v0.7.0 (2026-06-11)
+
+**Metrics-driven refactor: 97.6% accuracy (up from 66.2%)** 📊
+
+This release unifies the AST scoring with intent-detector's `CommandSafety` taxonomy, dramatically reducing false positives while maintaining zero false negatives. The change was validated against a 210-command test corpus (real session commands + synthetic variants).
+
+- ✅ **AST scoring refactored** — `scoreCommand` now uses `CommandSafety` (Safe/Contextual/Dangerous) as the base classification
+- ✅ **Safe commands short-circuit** — `cat`, `ls`, `grep`, `git status` etc. return score 0; flags/paths don't matter
+- ✅ **File ops are safe** — `cp`, `mv`, `mkdir`, `touch`, `ln`, `tee` are recoverable from git
+- ✅ **No "Home Directory" penalty** for read-only commands — `ls -la /Users/aslam/Downloads` is now safe
+- ✅ **Smart git classification** — `add`/`commit`/`pull`/`fetch`/`stash` are safe; `push --force`/`reset --hard` are critical
+- ✅ **RCE patterns always critical** — `curl|bash`, `base64|sh`, `nc -e` reach 85+ score
+- ✅ **Data exfil detected** — `cat /etc/passwd | curl` is critical
+- ✅ **System file writes blocked** — `echo x > /etc/passwd` is critical
+- ✅ **Metrics harness added** — `npm run metrics` runs 210-command corpus; `npm run metrics:check` is a CI gate
+- ✅ **210 tests still pass** — no regressions in existing test suite
+
+**Metrics (210-command corpus):**
+
+| Metric | v0.6.x | v0.7.0 | Delta |
+|--------|--------|--------|-------|
+| Accuracy | 66.2% | 97.6% | +31.4% |
+| False Positives | 59 | 5 | -92% |
+| False Negatives | 12 | 0 | -100% |
+| Recall | 78.6% | 100% | +21.4% |
+| False alarm rate | 40.1% | 3.4% | -36.7% |
+
+**New scripts:**
+- `npm run metrics` — run corpus and print report
+- `npm run metrics:proposed` — save to `docs/metrics/proposed.md`
+- `npm run metrics:check` — CI gate (fails if FP > 5 or FN > 0)
+- `npm run metrics:check -- --strict` — strict mode (FP ≤ 3)
+
+**Rollback:** v1 implementation preserved in `src/ast-analyzer.ts`; switch back by changing one import in `index.ts`.
+
+### v0.6.4 (2026-06-10)
+
+**Fix: `/dev/null` redirect false positive** 🐛
+
+- ✅ Exclude `/dev/null` from system path classification (was triggering on `2>/dev/null` redirects)
+- ✅ Exclude `/dev/null` from redirect detection
+
+### v0.6.3 (2026-06-10)
+
+**Fix: `effectiveMode is not defined` error** 🐛
+
+- ✅ Replace `effectiveMode()` with `_sessionMode ?? mode` in `checkShellCommand` (module-level function can't access closure)
+- ✅ Affects 5 calls in block/ask mode approval handlers
+
+### v0.6.2 (2026-06-10)
+
+**Fix: `pi is not defined` error in powerbar** 🐛
+
+- ✅ Replace `updatePowerbarSegment(pi, ...)` with `updatePowerbarSegment(_pi, ...)` in `checkShellCommand` (module-level function)
+- ✅ Affects 5 calls in block/ask mode approval handlers
 
 ### v0.6.1 (2026-05-25)
 

@@ -1,6 +1,6 @@
 # Metrics Report: proposed
 
-Generated: 2026-06-11T11:05:47.929Z
+Generated: 2026-06-11T11:16:18.526Z
 Corpus size: 210 commands
 
 ## Expected Distribution
