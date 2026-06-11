@@ -19,7 +19,11 @@
   },
   "main": "index.ts",
   "scripts": {
-    "test": "vitest run"
+    "test": "vitest run",
+    "metrics": "tsx scripts/metrics.ts",
+    "metrics:baseline": "tsx scripts/metrics.ts --label=baseline --out=docs/metrics/baseline.md",
+    "metrics:proposed": "tsx scripts/metrics.ts --label=proposed --out=docs/metrics/proposed.md",
+    "metrics:json": "tsx scripts/metrics.ts --json"
   },
   "author": "aslamplr",
   "type": "commonjs",
@@ -38,6 +42,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.7.0",
+    "tsx": "^4.22.4",
     "typescript": "^5.8.3",
     "vitest": "^4.1.6"
   }
