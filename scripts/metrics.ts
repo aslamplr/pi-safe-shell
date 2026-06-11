@@ -30,6 +30,7 @@ import {
   analyzeCommand,
   scoreCommand,
 } from '../src/ast-analyzer';
+import { scoreCommandV2 } from '../src/ast-analyzer-v2';
 import { CORPUS, getCorpusStats, type CorpusEntry, type ExpectedLevel } from './metrics-corpus';
 
 // ============================================================
@@ -46,6 +47,7 @@ function getArg(name: string, def?: string): string | undefined {
 const label = getArg('label', 'current');
 const jsonOnly = args.includes('--json');
 const outFile = getArg('out');
+const impl = (getArg('impl', 'v1') || 'v1').toLowerCase();
 
 // ============================================================
 // Risk level ordering (for "is X more severe than Y" check)
@@ -87,13 +89,13 @@ interface RunResult {
 async function runCorpus(): Promise<RunResult[]> {
   console.error('Initializing parser...');
   await initParser();
-  console.error('Running corpus...');
-
+  console.error('Running corpus with implementation: ' + impl);
+  const scoreFn = impl === 'v2' ? scoreCommandV2 : scoreCommand;
   const results: RunResult[] = [];
   for (const entry of CORPUS) {
     try {
       const analysis = analyzeCommand(entry.command);
-      const risk = scoreCommand(analysis);
+      const risk = scoreFn(analysis);
       const actual = risk.level as ExpectedLevel;
       results.push({
         entry,

@@ -125,7 +125,7 @@ export const CORPUS: CorpusEntry[] = [
   { command: 'ls /usr/bin', expected: 'caution', category: 'path-variants', note: 'system bin' },
   { command: 'find /Users/aslam/Downloads -name "*.txt"', expected: 'safe', category: 'path-variants' },
   { command: 'find /etc -name "*.conf"', expected: 'caution', category: 'path-variants' },
-  { command: 'find / -name "*.log" 2>/dev/null', expected: 'caution', category: 'path-variants', note: 'whole system search' },
+  { command: 'find / -name "*.log" 2>/dev/null', expected: 'safe', category: 'path-variants', note: 'user clarified: find on / is read-only reconnaissance, not dangerous' },
 
   // ============================================================
   // Category: chained (&&, ||, ;)
@@ -237,7 +237,7 @@ export const CORPUS: CorpusEntry[] = [
   { command: 'grep -rE "pat+ern" .', expected: 'safe', category: 'search' },
   { command: 'grep -rF "literal" .', expected: 'safe', category: 'search' },
   { command: 'find . -name "*.ts" 2>/dev/null', expected: 'safe', category: 'search' },
-  { command: 'find / -type f -name "*.log" 2>/dev/null', expected: 'caution', category: 'search' },
+  { command: 'find / -type f -name "*.log" 2>/dev/null', expected: 'safe', category: 'search', note: 'user clarified: find on / is read-only reconnaissance, not dangerous' },
 
   // ============================================================
   // Category: file ops with various flags

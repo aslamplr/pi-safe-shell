@@ -21,8 +21,10 @@
   "scripts": {
     "test": "vitest run",
     "metrics": "tsx scripts/metrics.ts",
-    "metrics:baseline": "tsx scripts/metrics.ts --label=baseline --out=docs/metrics/baseline.md",
-    "metrics:proposed": "tsx scripts/metrics.ts --label=proposed --out=docs/metrics/proposed.md",
+    "metrics:baseline": "tsx scripts/metrics.ts --label=baseline --impl=v1 --out=docs/metrics/baseline.md",
+    "metrics:proposed": "tsx scripts/metrics.ts --label=proposed --impl=v2 --out=docs/metrics/proposed.md",
+    "metrics:v1": "tsx scripts/metrics.ts --label=v1 --impl=v1",
+    "metrics:v2": "tsx scripts/metrics.ts --label=v2 --impl=v2",
     "metrics:json": "tsx scripts/metrics.ts --json"
   },
   "author": "aslamplr",
